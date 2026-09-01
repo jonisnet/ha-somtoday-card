@@ -1,0 +1,21 @@
+{
+  "name": "ha-somtoday-card",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "npm run format:check && npm run lint && npm test && npm run build",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint src tests scripts",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.34.0",
+    "esbuild": "^0.25.9",
+    "eslint": "^9.34.0",
+    "prettier": "^3.6.2",
+    "vitest": "^3.2.4"
+  }
+}
