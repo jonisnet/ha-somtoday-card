@@ -1,4 +1,3 @@
-
 # Somtoday Card
 
 [![Sponsor](https://img.shields.io/badge/sponsor-ea4aaa?style=flat-square&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/jonisnet)

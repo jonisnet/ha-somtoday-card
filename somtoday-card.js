@@ -218,6 +218,9 @@
       week: "Week",
       this_week: "This week",
       next_week: "Next week",
+      previous_week: "Previous week",
+      week_two: "Week two",
+      weeks: "weeks",
       homework: "Homework",
       tests: "Tests",
       test: "Test",
@@ -264,6 +267,9 @@
       week: "Week",
       this_week: "Deze week",
       next_week: "Volgende week",
+      previous_week: "Vorige week",
+      week_two: "Week twee",
+      weeks: "weken",
       homework: "Huiswerk",
       tests: "Toetsen",
       test: "Toets",
@@ -353,7 +359,7 @@
       _studentIndex: { state: true },
       _compact: { state: true },
       _dialog: { state: true },
-      _weekChoice: { state: true }
+      _weekOffset: { state: true }
     };
     static styles = css`
     :host {
@@ -536,6 +542,8 @@
     .empty-lesson .lesson-head span:last-child { margin-left: auto; white-space: nowrap; }
     .empty-lesson .add { margin-top: 7px; max-width: 100%; }
     .week-switch { display: flex; align-items: center; gap: 5px; width: 100%; margin: 0 0 10px; }
+    .week-arrow { display: inline-flex; align-items: center; justify-content: center; padding: 8px; }
+    .week-arrow ha-icon { --mdc-icon-size: 20px; }
     .print-button { margin-left: auto; display: inline-flex; align-items: center; justify-content: center; padding: 8px; }
     .print-button ha-icon { --mdc-icon-size: 20px; }
     :host([compact]) .print-button { display: none; }
@@ -636,6 +644,7 @@
       this._compact = false;
       this._dialog = null;
       this._lastRelevant = "";
+      this._weekOffset = 0;
     }
     setConfig(config) {
       validateConfig(config);
@@ -646,7 +655,7 @@
         ...config
       };
       this._view = this._config.default_view;
-      this._weekChoice = "this";
+      this._weekOffset = 0;
     }
     static getConfigElement() {
       return document.createElement("somtoday-card-editor");
@@ -666,7 +675,8 @@
       const ids = normalizeStudents(this._config || {}).flatMap(
         (student) => Object.entries(student).filter(([key]) => key.endsWith("_entity")).map(([, id]) => id)
       );
-      const relevant = ids.map((id) => `${id}:${value?.states?.[id]?.last_updated || ""}`).join("|");
+      const automaticWeekIds = Object.values(value?.states || {}).filter((state) => Number.isInteger(state.attributes?.week_offset)).map((state) => state.entity_id);
+      const relevant = [.../* @__PURE__ */ new Set([...ids, ...automaticWeekIds])].map((id) => `${id}:${value?.states?.[id]?.last_updated || ""}`).join("|");
       this._hass = value;
       if (relevant !== this._lastRelevant) {
         this._lastRelevant = relevant;
@@ -756,14 +766,34 @@
       return this._renderTests(student);
     }
     _renderWeek(student) {
-      const state = this._weekChoice === "next" ? this._state(student.next_week_entity) || this._relatedState(student, (candidate) => Array.isArray(candidate.attributes?.days)) : this._state(student.week_entity);
-      if (!isEntityUsable(state))
-        return this._empty(state ? "unavailable" : "no_data");
+      const state = this._weekState(student, this._weekOffset);
+      const controls = this._renderWeekControls();
+      if (!isEntityUsable(state)) return html`${controls}${this._empty(state ? "unavailable" : "no_data")}`;
       const days = completeSchoolWeek(normalizeWeekDays(state.attributes.days), state.attributes.week_start);
-      if (!days.length) return this._empty("no_data");
-      return html`<div class="week-switch"><button class="tab ${this._weekChoice === "this" ? "active" : ""}" @click=${() => this._weekChoice = "this"}>${this._t("this_week")}</button><button class="tab ${this._weekChoice === "next" ? "active" : ""}" @click=${() => this._weekChoice = "next"}>${this._t("next_week")}</button><button class="tab print-button" title=${this._t("print")} aria-label=${this._t("print")} @click=${() => this._printWeek(days, student)}><ha-icon icon="mdi:printer-outline"></ha-icon></button></div><div class="week" style="--days:${days.length}">
+      if (!days.length) return html`${controls}${this._empty("no_data")}`;
+      return html`${this._renderWeekControls(days, student)}<div class="week" style="--days:${days.length}">
       ${days.map((day) => this._renderDayColumn(day, null, student))}
     </div>`;
+    }
+    _weekState(student, offset) {
+      if (offset === 0) return this._state(student.week_entity);
+      if (offset === 1) {
+        return this._state(student.next_week_entity) || this._relatedState(student, (candidate) => candidate.attributes?.week_offset === 1 && Array.isArray(candidate.attributes?.days));
+      }
+      return this._relatedState(student, (candidate) => candidate.attributes?.week_offset === offset && Array.isArray(candidate.attributes?.days));
+    }
+    _renderWeekControls(days = null, student = null) {
+      const future = this._weekOffset >= 2;
+      return html`<div class="week-switch">
+      <button class="tab ${this._weekOffset === 0 ? "active" : ""}" @click=${() => this._weekOffset = 0}>${this._t("this_week")}</button>
+      ${future ? html`<button class="tab week-arrow" aria-label=${this._t("previous_week")} @click=${() => this._weekOffset = Math.max(1, this._weekOffset - 1)}><ha-icon icon="mdi:chevron-left"></ha-icon></button><span class="tab active">${this._weekOffset} ${this._t("weeks")}</span>${this._weekOffset < 8 ? html`<button class="tab week-arrow" aria-label=${this._t("next_week")} @click=${() => this._weekOffset += 1}><ha-icon icon="mdi:chevron-right"></ha-icon></button>` : ""}` : html`<button class="tab ${this._weekOffset === 1 ? "active" : ""}" @click=${() => this._weekOffset = 1}>${this._t("next_week")}</button><button class="tab week-arrow" aria-label=${this._t("week_two")} @click=${() => this._weekOffset = 2}><ha-icon icon="mdi:chevron-right"></ha-icon></button>`}
+      ${days && student ? html`<button class="tab print-button" title=${this._t("print")} aria-label=${this._t("print")} @click=${() => this._printWeek(days, student)}><ha-icon icon="mdi:printer-outline"></ha-icon></button>` : ""}
+    </div>`;
+    }
+    _weekLabel() {
+      if (this._weekOffset === 0) return this._t("this_week");
+      if (this._weekOffset === 1) return this._t("next_week");
+      return `${this._weekOffset} ${this._t("weeks")}`;
     }
     _printWeek(days, student) {
       const popup = window.open("", "_blank");
@@ -777,7 +807,7 @@
         const lesson = (day.lessons || []).find((item) => Number(item.period_start ?? item.period) === period || String(item.start || "").slice(11, 16) === start);
         return lesson ? `<td class="${lesson.cancelled ? "cancelled" : ""}"><strong>${escapeHtml(lesson.subject || lesson.subject_short || "")}</strong><small>${escapeHtml(lesson.teacher || "")}${lesson.location ? ` \xB7 ${escapeHtml(lesson.location)}` : ""}</small></td>` : "<td class=empty>Geen les</td>";
       }).join("")}</tr>`).join("");
-      popup.document.write(`<!doctype html><html><head><title>${escapeHtml(this._config.title)} \u2013 ${escapeHtml(this._t(this._weekChoice === "this" ? "this_week" : "next_week"))}</title><style>@page{size:landscape;margin:12mm}body{font:12px Arial;color:#111}h1{margin:0 0 4px}p{margin:0 0 14px;color:#555}table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{border:1px solid #999;padding:6px;vertical-align:top}thead th{background:#e8eef5}tbody th{width:70px;background:#f3f3f3}small{display:block;margin-top:3px;color:#555}.empty{color:#999;background:#fafafa}.cancelled{text-decoration:line-through;background:#ffe8e8}</style></head><body><h1>${escapeHtml(this._config.title)}</h1><p>${escapeHtml(student.name || "")} \xB7 ${escapeHtml(this._t(this._weekChoice === "this" ? "this_week" : "next_week"))}</p><table><thead><tr><th>Uur</th>${days.map((day) => `<th>${escapeHtml(formatDate(day.date, this._locale()))}</th>`).join("")}</tr></thead><tbody>${cells}</tbody></table><script>window.onload=()=>{window.print()}<\/script></body></html>`);
+      popup.document.write(`<!doctype html><html><head><title>${escapeHtml(this._config.title)} \u2013 ${escapeHtml(this._weekLabel())}</title><style>@page{size:landscape;margin:12mm}body{font:12px Arial;color:#111}h1{margin:0 0 4px}p{margin:0 0 14px;color:#555}table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{border:1px solid #999;padding:6px;vertical-align:top}thead th{background:#e8eef5}tbody th{width:70px;background:#f3f3f3}small{display:block;margin-top:3px;color:#555}.empty{color:#999;background:#fafafa}.cancelled{text-decoration:line-through;background:#ffe8e8}</style></head><body><h1>${escapeHtml(this._config.title)}</h1><p>${escapeHtml(student.name || "")} \xB7 ${escapeHtml(this._weekLabel())}</p><table><thead><tr><th>Uur</th>${days.map((day) => `<th>${escapeHtml(formatDate(day.date, this._locale()))}</th>`).join("")}</tr></thead><tbody>${cells}</tbody></table><script>window.onload=()=>{window.print()}<\/script></body></html>`);
       LESSON_PERIOD_SLOTS.forEach(([period, start], rowIndex) => {
         days.forEach((day, dayIndex) => {
           const lesson = (day.lessons || []).find((item) => Number(item.period_start ?? item.period) === period || String(item.start || "").slice(11, 16) === start);
@@ -800,7 +830,7 @@
       const key = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`;
       for (const state of [
         this._state(student.week_entity),
-        this._state(student.next_week_entity) || this._relatedState(student, (candidate) => Array.isArray(candidate.attributes?.days))
+        this._weekState(student, 1)
       ]) {
         if (!isEntityUsable(state)) continue;
         const day = normalizeWeekDays(state.attributes.days).find((item) => item.date === key);

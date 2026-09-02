@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Browse one selected timetable week up to eight weeks ahead with compact
+  previous/next arrows. Returning to This week restores the standard Next week
+  control.
+- Replace the removed previews with privacy-safe examples that use fictional
+  pupils, teachers, rooms and timetable content only.
+
 ## 0.1.0
 
 ### Fixed
