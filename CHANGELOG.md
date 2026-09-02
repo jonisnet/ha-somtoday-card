@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.2
+
+- Fill the whole card automatically when it is first added to a dashboard, for
+  every child on the account: all twelve entity fields per pupil instead of one
+  guessed week sensor, and a `students` array when there is more than one child.
+- Detect those entities by `translation_key` through the entity registry rather
+  than by reading entity_id text. Home Assistant builds entity_ids from the
+  translated entity name in the user's own language, for forty languages, so the
+  previous `_deze_week` / `_this_week` guess only ever worked on a Dutch or
+  English install. The pupil's name now comes from the device rather than from
+  the entity_id. Installs without an entity registry keep the old guess, which
+  additionally tolerates the `_2` suffix Home Assistant appends after a
+  reinstall.
+
 ## 0.1.1
 
 - Browse one selected timetable week up to eight weeks ahead with compact

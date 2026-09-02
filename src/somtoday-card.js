@@ -3,6 +3,7 @@ import {
   VIEWS,
   buildSchoolDayTimeline,
   LESSON_PERIOD_SLOTS,
+  buildStubConfig,
   compareLessonTime,
   findDay,
   formatDate,
@@ -18,7 +19,7 @@ import {
 } from "./helpers.js";
 import { TRANSLATIONS } from "./translations.js";
 
-const VERSION = "0.1.1";
+const VERSION = "0.1.2";
 const getLit = () => {
   const base =
     customElements.get("hui-masonry-view") ||
@@ -379,18 +380,12 @@ class SomtodayCard extends LitElement {
   static getConfigElement() {
     return document.createElement("somtoday-card-editor");
   }
+  // Fills every field the card knows about, for every child on the account, so
+  // dropping the card on a dashboard gives working tabs instead of one guessed
+  // sensor. Matching happens on translation_key via the entity registry — see
+  // detectStudents() for why entity_id text is not good enough.
   static getStubConfig(hass) {
-    const states = Object.keys(hass?.states || {});
-    const week = states.find(
-      (id) =>
-        id.startsWith("sensor.somtoday_") &&
-        (id.endsWith("_deze_week") || id.endsWith("_this_week")),
-    );
-    return {
-      type: "custom:somtoday-card",
-      default_view: "week",
-      week_entity: week || "sensor.somtoday_student_deze_week",
-    };
+    return buildStubConfig(hass);
   }
 
   set hass(value) {

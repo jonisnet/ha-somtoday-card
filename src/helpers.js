@@ -18,6 +18,110 @@ export function validateConfig(config) {
   return true;
 }
 
+// The integration and this card are both ours, so the link between a card field
+// and an entity is fixed. It is expressed as a translation_key rather than as
+// entity_id text on purpose: Home Assistant builds entity_ids from the
+// *translated* entity name, in the user's own language, for 40 languages with
+// Dutch and German among them. A guess like `_deze_week` is therefore only
+// correct on a Dutch install, while a translation_key never changes at all.
+export const STUDENT_ENTITY_KEYS = {
+  week_entity: "active_week",
+  next_week_entity: "next_week",
+  today_entity: "today",
+  day_entity: "next_school_day",
+  planner_entity: "planner",
+  homework_entity: "open_homework",
+  upcoming_work_entity: "upcoming_work",
+  current_lesson_entity: "current_lesson",
+  next_lesson_entity: "next_lesson",
+  next_test_entity: "next_test",
+  base_schedule_entity: "base_week",
+  last_update_entity: "last_update",
+};
+
+const SOMTODAY_PLATFORM = "somtoday";
+
+// Last-resort guess for installs old enough to lack `hass.entities`. The
+// trailing (?:_\d+)? tolerates Home Assistant's own disambiguation suffix,
+// which it appends when an entity_id would collide with a stale one left behind
+// by a reinstall.
+const WEEK_ID_PATTERN =
+  /^sensor\.somtoday_.+_(?:deze_week|this_week)(?:_\d+)?$/;
+
+// The integration names one device per student, `Somtoday (Full Name)`, so the
+// child's name is read from the device rather than parsed out of an entity_id.
+export function studentNameFromDevice(deviceName) {
+  if (!deviceName) return "";
+  const match = /^Somtoday\s*\((.+)\)\s*$/.exec(deviceName);
+  return (match ? match[1] : deviceName).trim();
+}
+
+// Returns one entry per Somtoday student found in the entity registry, ready to
+// be used as card config. Empty when the registry is unavailable, so callers can
+// fall back; empty is also the honest answer when the integration is not set up.
+export function detectStudents(hass) {
+  const registry = hass?.entities;
+  if (!registry) return [];
+
+  const byDevice = new Map();
+  for (const [entityId, entry] of Object.entries(registry)) {
+    if (!entityId.startsWith("sensor.")) continue;
+    if (entry?.platform !== SOMTODAY_PLATFORM) continue;
+    // Keyed on entity_id when a device is somehow missing, so such an entity
+    // still forms a group of its own instead of being dropped.
+    const key = entry.device_id || entityId;
+    if (!byDevice.has(key)) byDevice.set(key, new Map());
+    const found = byDevice.get(key);
+    // First one wins: `future_week` is shared by seven entities, and none of
+    // them is in the mapping anyway.
+    if (entry.translation_key && !found.has(entry.translation_key)) {
+      found.set(entry.translation_key, entityId);
+    }
+  }
+
+  const students = [];
+  for (const [deviceId, found] of byDevice) {
+    const student = {};
+    const device = hass.devices?.[deviceId];
+    const name = studentNameFromDevice(device?.name_by_user || device?.name);
+    if (name) student.name = name;
+    for (const [field, translationKey] of Object.entries(STUDENT_ENTITY_KEYS)) {
+      const entityId = found.get(translationKey);
+      if (entityId) student[field] = entityId;
+    }
+    // A device that yielded no usable sensor is not a student we can render.
+    if (Object.keys(student).some((key) => key.endsWith("_entity"))) {
+      students.push(student);
+    }
+  }
+  // Stable order, so two children do not swap places between page loads.
+  students.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  return students;
+}
+
+// Falls back to the text guess only when the registry told us nothing.
+export function guessWeekEntity(hass) {
+  return (
+    Object.keys(hass?.states || {}).find((id) => WEEK_ID_PATTERN.test(id)) || ""
+  );
+}
+
+// The config a freshly dropped card starts with. One child stays flat, because
+// that is the config people read, edit and paste; several children become a
+// `students` array. normalizeStudents() accepts both shapes.
+export function buildStubConfig(hass) {
+  const base = { type: "custom:somtoday-card", default_view: "week" };
+  const students = detectStudents(hass);
+  if (students.length === 1) return { ...base, ...students[0] };
+  if (students.length > 1) return { ...base, students };
+  // Nothing detected: an install without `hass.entities`, or the integration is
+  // not set up yet. Leave something editable rather than an empty card.
+  return {
+    ...base,
+    week_entity: guessWeekEntity(hass) || "sensor.somtoday_student_deze_week",
+  };
+}
+
 export function normalizeStudents(config = {}) {
   if (Array.isArray(config.students)) return config.students.filter(Boolean);
   const keys = [

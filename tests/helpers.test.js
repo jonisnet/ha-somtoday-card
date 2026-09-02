@@ -2,12 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
   buildDayTimeline,
   buildSchoolDayTimeline,
+  buildStubConfig,
+  detectStudents,
   formatTime,
+  guessWeekEntity,
   findDay,
   groupLessonsByDay,
   lessonDeviation,
   normalizeWeekDays,
   sortHomework,
+  STUDENT_ENTITY_KEYS,
   subjectColor,
   validateConfig,
   workForLesson,
@@ -187,5 +191,213 @@ describe("subject colours", () => {
   it("generates stable school-specific fallback colours", () => {
     expect(subjectColor("lo_kic")).toBe(subjectColor("LO_KIC"));
     expect(subjectColor("lo_kic")).not.toBe(subjectColor("plus_uur"));
+  });
+});
+
+describe("auto-detecting students from the entity registry", () => {
+  // Mirrors how Home Assistant builds entity_ids: from the translated entity
+  // name in the user's own language. The German ids below are what a German
+  // install produces, and no code should have to know that.
+  const registryFor = (deviceId, prefix, suffixes) =>
+    Object.fromEntries(
+      Object.entries(suffixes).map(([translationKey, suffix]) => [
+        `sensor.${prefix}_${suffix}`,
+        {
+          platform: "somtoday",
+          device_id: deviceId,
+          translation_key: translationKey,
+        },
+      ]),
+    );
+
+  const DUTCH = {
+    active_week: "deze_week",
+    next_week: "volgende_week",
+    today: "vandaag",
+    next_school_day: "eerstvolgende_schooldag",
+    planner: "eigen_afspraken",
+    open_homework: "openstaand_huiswerk",
+    upcoming_work: "aankomend_schoolwerk",
+    current_lesson: "huidige_les",
+    next_lesson: "volgende_les",
+    next_test: "volgende_toets",
+    base_week: "basisrooster",
+    last_update: "laatste_update",
+  };
+
+  it("fills every card field for a single student", () => {
+    const hass = {
+      entities: registryFor("dev1", "somtoday_anna_de_vries", DUTCH),
+      devices: { dev1: { name: "Somtoday (Anna de Vries)" } },
+    };
+    const [student] = detectStudents(hass);
+    expect(student.name).toBe("Anna de Vries");
+    expect(Object.keys(STUDENT_ENTITY_KEYS).every((key) => student[key])).toBe(
+      true,
+    );
+    expect(student.week_entity).toBe("sensor.somtoday_anna_de_vries_deze_week");
+    expect(student.homework_entity).toBe(
+      "sensor.somtoday_anna_de_vries_openstaand_huiswerk",
+    );
+  });
+
+  it("works on a German install, where every suffix differs", () => {
+    const german = {
+      active_week: "diese_woche",
+      today: "heute",
+      next_test: "nachste_prufung",
+    };
+    const hass = {
+      entities: registryFor("dev1", "somtoday_max_muller", german),
+      devices: { dev1: { name: "Somtoday (Max Müller)" } },
+    };
+    const [student] = detectStudents(hass);
+    expect(student.week_entity).toBe("sensor.somtoday_max_muller_diese_woche");
+    expect(student.today_entity).toBe("sensor.somtoday_max_muller_heute");
+    expect(student.next_test_entity).toBe(
+      "sensor.somtoday_max_muller_nachste_prufung",
+    );
+  });
+
+  it("returns one entry per child, in a stable order", () => {
+    const hass = {
+      entities: {
+        ...registryFor("dev_b", "somtoday_zoe", DUTCH),
+        ...registryFor("dev_a", "somtoday_bram", DUTCH),
+      },
+      devices: {
+        dev_a: { name: "Somtoday (Bram)" },
+        dev_b: { name: "Somtoday (Zoe)" },
+      },
+    };
+    const students = detectStudents(hass);
+    expect(students.map((s) => s.name)).toEqual(["Bram", "Zoe"]);
+    expect(students[0].week_entity).toBe("sensor.somtoday_bram_deze_week");
+    expect(students[1].week_entity).toBe("sensor.somtoday_zoe_deze_week");
+  });
+
+  it("ignores other integrations and non-sensor entities", () => {
+    const hass = {
+      entities: {
+        ...registryFor("dev1", "somtoday_anna", DUTCH),
+        "sensor.postnl_anna_deze_week": {
+          platform: "postnl",
+          device_id: "dev2",
+          translation_key: "active_week",
+        },
+        "binary_sensor.somtoday_anna_vandaag": {
+          platform: "somtoday",
+          device_id: "dev1",
+          translation_key: "today",
+        },
+      },
+      devices: { dev1: { name: "Somtoday (Anna)" }, dev2: { name: "PostNL" } },
+    };
+    const students = detectStudents(hass);
+    expect(students).toHaveLength(1);
+    expect(students[0].today_entity).toBe("sensor.somtoday_anna_vandaag");
+  });
+
+  it("prefers a renamed device over the integration's own name", () => {
+    const hass = {
+      entities: registryFor("dev1", "somtoday_anna", DUTCH),
+      devices: {
+        dev1: { name: "Somtoday (Anna de Vries)", name_by_user: "Anna" },
+      },
+    };
+    expect(detectStudents(hass)[0].name).toBe("Anna");
+  });
+
+  it("skips a device that yielded no usable sensor", () => {
+    const hass = {
+      entities: {
+        "sensor.somtoday_anna_week_3": {
+          platform: "somtoday",
+          device_id: "dev1",
+          translation_key: "future_week",
+        },
+      },
+      devices: { dev1: { name: "Somtoday (Anna)" } },
+    };
+    expect(detectStudents(hass)).toEqual([]);
+  });
+
+  it("returns nothing when the registry is unavailable", () => {
+    expect(detectStudents({ states: {} })).toEqual([]);
+    expect(detectStudents(undefined)).toEqual([]);
+  });
+});
+
+describe("the text fallback, for installs without an entity registry", () => {
+  it("finds a week sensor in either shipped language", () => {
+    expect(
+      guessWeekEntity({ states: { "sensor.somtoday_anna_deze_week": {} } }),
+    ).toBe("sensor.somtoday_anna_deze_week");
+    expect(
+      guessWeekEntity({ states: { "sensor.somtoday_anna_this_week": {} } }),
+    ).toBe("sensor.somtoday_anna_this_week");
+  });
+
+  it("tolerates Home Assistant's collision suffix after a reinstall", () => {
+    expect(
+      guessWeekEntity({ states: { "sensor.somtoday_anna_deze_week_2": {} } }),
+    ).toBe("sensor.somtoday_anna_deze_week_2");
+  });
+
+  it("returns an empty string rather than a wrong guess", () => {
+    expect(
+      guessWeekEntity({ states: { "sensor.somtoday_anna_vandaag": {} } }),
+    ).toBe("");
+    expect(guessWeekEntity(undefined)).toBe("");
+  });
+});
+
+describe("the config a freshly dropped card starts with", () => {
+  const dutch = (deviceId, prefix) =>
+    Object.fromEntries(
+      Object.entries({
+        active_week: "deze_week",
+        today: "vandaag",
+        open_homework: "openstaand_huiswerk",
+      }).map(([translationKey, suffix]) => [
+        `sensor.${prefix}_${suffix}`,
+        {
+          platform: "somtoday",
+          device_id: deviceId,
+          translation_key: translationKey,
+        },
+      ]),
+    );
+
+  it("stays flat for one child, and validates", () => {
+    const config = buildStubConfig({
+      entities: dutch("dev1", "somtoday_anna"),
+      devices: { dev1: { name: "Somtoday (Anna)" } },
+    });
+    expect(config.students).toBeUndefined();
+    expect(config.name).toBe("Anna");
+    expect(config.week_entity).toBe("sensor.somtoday_anna_deze_week");
+    expect(validateConfig(config)).toBe(true);
+  });
+
+  it("uses a students array for two children, and validates", () => {
+    const config = buildStubConfig({
+      entities: {
+        ...dutch("dev1", "somtoday_anna"),
+        ...dutch("dev2", "somtoday_bram"),
+      },
+      devices: {
+        dev1: { name: "Somtoday (Anna)" },
+        dev2: { name: "Somtoday (Bram)" },
+      },
+    });
+    expect(config.students.map((s) => s.name)).toEqual(["Anna", "Bram"]);
+    expect(validateConfig(config)).toBe(true);
+  });
+
+  it("falls back to a placeholder that still opens the editor", () => {
+    const config = buildStubConfig({ states: {} });
+    expect(config.week_entity).toBe("sensor.somtoday_student_deze_week");
+    expect(validateConfig(config)).toBe(true);
   });
 });

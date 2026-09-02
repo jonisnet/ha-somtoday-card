@@ -1,4 +1,4 @@
-/* Somtoday Card v0.1.1 */
+/* Somtoday Card v0.1.2 */
 (() => {
   // src/helpers.js
   var VIEWS = ["day", "tomorrow", "week", "homework", "tests"];
@@ -18,6 +18,71 @@
       throw new Error(`Unknown default_view: ${config.default_view}`);
     }
     return true;
+  }
+  var STUDENT_ENTITY_KEYS = {
+    week_entity: "active_week",
+    next_week_entity: "next_week",
+    today_entity: "today",
+    day_entity: "next_school_day",
+    planner_entity: "planner",
+    homework_entity: "open_homework",
+    upcoming_work_entity: "upcoming_work",
+    current_lesson_entity: "current_lesson",
+    next_lesson_entity: "next_lesson",
+    next_test_entity: "next_test",
+    base_schedule_entity: "base_week",
+    last_update_entity: "last_update"
+  };
+  var SOMTODAY_PLATFORM = "somtoday";
+  var WEEK_ID_PATTERN = /^sensor\.somtoday_.+_(?:deze_week|this_week)(?:_\d+)?$/;
+  function studentNameFromDevice(deviceName) {
+    if (!deviceName) return "";
+    const match = /^Somtoday\s*\((.+)\)\s*$/.exec(deviceName);
+    return (match ? match[1] : deviceName).trim();
+  }
+  function detectStudents(hass) {
+    const registry = hass?.entities;
+    if (!registry) return [];
+    const byDevice = /* @__PURE__ */ new Map();
+    for (const [entityId, entry] of Object.entries(registry)) {
+      if (!entityId.startsWith("sensor.")) continue;
+      if (entry?.platform !== SOMTODAY_PLATFORM) continue;
+      const key = entry.device_id || entityId;
+      if (!byDevice.has(key)) byDevice.set(key, /* @__PURE__ */ new Map());
+      const found = byDevice.get(key);
+      if (entry.translation_key && !found.has(entry.translation_key)) {
+        found.set(entry.translation_key, entityId);
+      }
+    }
+    const students = [];
+    for (const [deviceId, found] of byDevice) {
+      const student = {};
+      const device = hass.devices?.[deviceId];
+      const name = studentNameFromDevice(device?.name_by_user || device?.name);
+      if (name) student.name = name;
+      for (const [field, translationKey] of Object.entries(STUDENT_ENTITY_KEYS)) {
+        const entityId = found.get(translationKey);
+        if (entityId) student[field] = entityId;
+      }
+      if (Object.keys(student).some((key) => key.endsWith("_entity"))) {
+        students.push(student);
+      }
+    }
+    students.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    return students;
+  }
+  function guessWeekEntity(hass) {
+    return Object.keys(hass?.states || {}).find((id) => WEEK_ID_PATTERN.test(id)) || "";
+  }
+  function buildStubConfig(hass) {
+    const base = { type: "custom:somtoday-card", default_view: "week" };
+    const students = detectStudents(hass);
+    if (students.length === 1) return { ...base, ...students[0] };
+    if (students.length > 1) return { ...base, students };
+    return {
+      ...base,
+      week_entity: guessWeekEntity(hass) || "sensor.somtoday_student_deze_week"
+    };
   }
   function normalizeStudents(config = {}) {
     if (Array.isArray(config.students)) return config.students.filter(Boolean);
@@ -312,7 +377,7 @@
   };
 
   // src/somtoday-card.js
-  var VERSION = "0.1.1";
+  var VERSION = "0.1.2";
   var getLit = () => {
     const base = customElements.get("hui-masonry-view") || customElements.get("ha-panel-lovelace") || customElements.get("ha-app");
     const LitElement2 = base ? Object.getPrototypeOf(base) : window.LitElement;
@@ -660,16 +725,12 @@
     static getConfigElement() {
       return document.createElement("somtoday-card-editor");
     }
+    // Fills every field the card knows about, for every child on the account, so
+    // dropping the card on a dashboard gives working tabs instead of one guessed
+    // sensor. Matching happens on translation_key via the entity registry — see
+    // detectStudents() for why entity_id text is not good enough.
     static getStubConfig(hass) {
-      const states = Object.keys(hass?.states || {});
-      const week = states.find(
-        (id) => id.startsWith("sensor.somtoday_") && (id.endsWith("_deze_week") || id.endsWith("_this_week"))
-      );
-      return {
-        type: "custom:somtoday-card",
-        default_view: "week",
-        week_entity: week || "sensor.somtoday_student_deze_week"
-      };
+      return buildStubConfig(hass);
     }
     set hass(value) {
       const ids = normalizeStudents(this._config || {}).flatMap(
