@@ -83,6 +83,17 @@ without breaking the card.
 
 The week is horizontal while the card has enough room. A `ResizeObserver` measures the card itself—not the browser—and changes to a vertical day layout below 620 px.
 
+## Getting notified as well
+
+The card shows the timetable; it does not push anything at you. For a message
+when something changes — a lesson dropped, moved, another room or teacher —
+the integration ships a blueprint:
+
+[![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fjonisnet%2Fha-somtoday%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fjonisnet%2Fsomtoday_roosterwijziging.yaml)
+
+It asks which phones to notify and which page to open when the notification is
+tapped, so you can send someone straight to the dashboard this card is on.
+
 ## Required integration data
 
 The week view requires the `deze_week`/`this_week` sensor. Other views require their corresponding school-day, homework, and next-test sensors. Removed baseline lessons are displayed from each day's `missing` list.
