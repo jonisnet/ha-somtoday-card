@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.1
 
 - Browse one selected timetable week up to eight weeks ahead with compact
   previous/next arrows. Returning to This week restores the standard Next week

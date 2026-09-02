@@ -1,4 +1,4 @@
-/* Somtoday Card v0.1.0 */
+/* Somtoday Card v0.1.1 */
 (() => {
   // src/helpers.js
   var VIEWS = ["day", "tomorrow", "week", "homework", "tests"];
@@ -312,7 +312,7 @@
   };
 
   // src/somtoday-card.js
-  var VERSION = "0.1.0";
+  var VERSION = "0.1.1";
   var getLit = () => {
     const base = customElements.get("hui-masonry-view") || customElements.get("ha-panel-lovelace") || customElements.get("ha-app");
     const LitElement2 = base ? Object.getPrototypeOf(base) : window.LitElement;

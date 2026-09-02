@@ -18,7 +18,7 @@ import {
 } from "./helpers.js";
 import { TRANSLATIONS } from "./translations.js";
 
-const VERSION = "0.1.0";
+const VERSION = "0.1.1";
 const getLit = () => {
   const base =
     customElements.get("hui-masonry-view") ||
