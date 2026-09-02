@@ -15,32 +15,56 @@ No `browser_mod`, card-mod or runtime JavaScript dependency is required.
 
 ## Preview
 
-Screenshots are pending: the previous set showed a real student's name and had
-fallen behind the card's features. `preview/index.html` renders the card with
-placeholder data if you want to look at it locally.
+![The card on a wide screen](https://raw.githubusercontent.com/jonisnet/ha-somtoday-card/main/preview/wide-dark.png)
+
+![The card on a phone](https://raw.githubusercontent.com/jonisnet/ha-somtoday-card/main/preview/narrow-dark.png)
+
+Light-theme versions are in [`preview/`](preview), and `preview/index.html`
+renders the card locally with placeholder data. All names, teachers, rooms and
+lessons in these previews are fictional.
 
 ## Configuration
 
-Entity IDs are deliberately configured rather than inferred because Home Assistant translates entity names.
+Add the card with the visual editor and it fills itself in — every field, for
+every child on the account. There is nothing to type.
+
+It finds the entities through the entity registry and matches each one on its
+`translation_key`. That key is the same in every language, which entity IDs are
+not: Home Assistant builds those from the _translated_ entity name, in your own
+language, for forty languages. Children are told apart by their device, and the
+pupil's name is read from that device as well.
+
+For one child the generated configuration is flat:
 
 ```yaml
 type: custom:somtoday-card
-title: School
 default_view: week
-show_view_tabs: true
-students:
-  - name: child
-    week_entity: sensor.somtoday_child_deze_week
-    today_entity: sensor.somtoday_child_vandaag
-    day_entity: sensor.somtoday_child_eerstvolgende_schooldag
-    current_lesson_entity: sensor.somtoday_child_huidige_les
-    next_lesson_entity: sensor.somtoday_child_volgende_les
-    homework_entity: sensor.somtoday_child_openstaand_huiswerk
-    next_test_entity: sensor.somtoday_child_volgende_toets
-    base_schedule_entity: sensor.somtoday_child_basisrooster
-    planner_entity: sensor.somtoday_child_planning
-    next_week_entity: sensor.somtoday_child_volgende_week
-    upcoming_work_entity: sensor.somtoday_child_aankomend_schoolwerk
+name: Sanne Jansen
+week_entity: sensor.somtoday_sanne_jansen_deze_week
+next_week_entity: sensor.somtoday_sanne_jansen_volgende_week
+today_entity: sensor.somtoday_sanne_jansen_vandaag
+day_entity: sensor.somtoday_sanne_jansen_eerstvolgende_schooldag
+planner_entity: sensor.somtoday_sanne_jansen_eigen_afspraken
+homework_entity: sensor.somtoday_sanne_jansen_openstaand_huiswerk
+upcoming_work_entity: sensor.somtoday_sanne_jansen_aankomend_schoolwerk
+current_lesson_entity: sensor.somtoday_sanne_jansen_huidige_les
+next_lesson_entity: sensor.somtoday_sanne_jansen_volgende_les
+next_test_entity: sensor.somtoday_sanne_jansen_volgende_toets
+base_schedule_entity: sensor.somtoday_sanne_jansen_basisrooster
+last_update_entity: sensor.somtoday_sanne_jansen_laatste_update
+```
+
+With more than one child it becomes a `students` list instead, sorted by name so
+they keep their order. Both shapes are accepted, so a single child can be moved
+into a `students` list by hand at any time.
+
+Everything can still be edited afterwards, and anything not detected — an older
+Home Assistant without an entity registry, for instance — can be filled in by
+hand. Only one of `week_entity`, `today_entity` or `day_entity` is required.
+
+Subject colours are the one thing worth adding yourself:
+
+```yaml
 subject_colors:
   wiskunde: "#3867d6"
   engels: "#20bf6b"
@@ -49,13 +73,14 @@ subject_colors:
 
 ### Options
 
-| Option           | Description                                |
-| ---------------- | ------------------------------------------ |
-| `title`          | Card heading                               |
-| `default_view`   | `day`, `week`, `homework`, or `tests`      |
-| `show_view_tabs` | Show the in-card view switcher             |
-| `students`       | One or more explicitly configured students |
-| `subject_colors` | Subject name to CSS color mapping          |
+| Option           | Description                                      |
+| ---------------- | ------------------------------------------------ |
+| `title`          | Card heading                                     |
+| `default_view`   | `day`, `week`, `homework`, or `tests`            |
+| `show_view_tabs` | Show the in-card view switcher                   |
+| `name`           | Pupil name in the heading, for a single child    |
+| `students`       | One entry per child, when there is more than one |
+| `subject_colors` | Subject name to CSS color mapping                |
 
 Mappings take precedence. Unmapped, school-specific abbreviations receive a
 stable generated accent, so the card never depends on a hardcoded subject list.
@@ -96,7 +121,21 @@ tapped, so you can send someone straight to the dashboard this card is on.
 
 ## Required integration data
 
-The week view requires the `deze_week`/`this_week` sensor. Other views require their corresponding school-day, homework, and next-test sensors. Removed baseline lessons are displayed from each day's `missing` list.
+Views are named here by what the integration calls them internally, because the
+entity names themselves differ per language:
+
+| View             | Sensor                                       |
+| ---------------- | -------------------------------------------- |
+| Week             | `active_week`, and `next_week` for next week |
+| Day / Tomorrow   | `today` and `next_school_day`                |
+| Homework         | `open_homework`                              |
+| Tests            | `next_test` and `upcoming_work`              |
+| Own appointments | `planner`                                    |
+
+Browsing further ahead uses the integration's future-week sensors, which are
+found at runtime through their `week_offset` attribute and need no configuration.
+Removed baseline lessons are shown from each day's `missing` list, which comes
+from `base_week`.
 
 ## Development
 
