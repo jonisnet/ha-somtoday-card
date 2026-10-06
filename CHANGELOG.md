@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0
+
+- **All children on one card.** With `show_all_students: true` (a switch in the
+  editor, off by default) the Today and Tomorrow views get an _All children_
+  button that shows every child's day in its own column, side by side.
+- **The children are now a second row under the view buttons** instead of above
+  them: the view is the main choice, the child narrows it down. A single child
+  still gets no row at all.
+- **Choose the order of the children:** `student_order: manual` (the default,
+  and what every existing card already did) keeps the list order and adds
+  up/down arrows in the editor; `student_order: name` sorts alphabetically.
+
 ## 0.1.2
 
 - Fill the whole card automatically when it is first added to a dashboard, for

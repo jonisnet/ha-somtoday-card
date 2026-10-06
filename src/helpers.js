@@ -15,6 +15,9 @@ export function validateConfig(config) {
   if (config.default_view && !VIEWS.includes(config.default_view)) {
     throw new Error(`Unknown default_view: ${config.default_view}`);
   }
+  if (config.student_order && !STUDENT_ORDERS.includes(config.student_order)) {
+    throw new Error(`Unknown student_order: ${config.student_order}`);
+  }
   return true;
 }
 
@@ -142,6 +145,23 @@ export function normalizeStudents(config = {}) {
   const student = {};
   for (const key of keys) if (config[key]) student[key] = config[key];
   return Object.keys(student).length ? [student] : [];
+}
+
+export const STUDENT_ORDERS = ["manual", "name"];
+
+// The order the children appear in the card. "manual" keeps the order of the
+// `students` list, which the editor lets a parent rearrange; "name" sorts
+// alphabetically at render time, so a renamed child moves along by itself.
+// Manual is the default because it is what every existing configuration
+// already does.
+export function orderStudents(config = {}) {
+  const students = normalizeStudents(config);
+  if (config.student_order !== "name") return students;
+  return [...students].sort((a, b) =>
+    (a.name || "").localeCompare(b.name || "", undefined, {
+      sensitivity: "base",
+    }),
+  );
 }
 
 export function parseTimestamp(value) {

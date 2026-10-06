@@ -10,6 +10,7 @@ import {
   groupLessonsByDay,
   lessonDeviation,
   normalizeWeekDays,
+  orderStudents,
   sortHomework,
   STUDENT_ENTITY_KEYS,
   subjectColor,
@@ -399,5 +400,44 @@ describe("the config a freshly dropped card starts with", () => {
     const config = buildStubConfig({ states: {} });
     expect(config.week_entity).toBe("sensor.somtoday_student_deze_week");
     expect(validateConfig(config)).toBe(true);
+  });
+});
+
+describe("order of the children", () => {
+  const students = [
+    { name: "Noor", week_entity: "sensor.noor" },
+    { name: "ayla", week_entity: "sensor.ayla" },
+    { name: "Bram", week_entity: "sensor.bram" },
+  ];
+
+  it("keeps the configured order by default", () => {
+    expect(orderStudents({ students }).map((s) => s.name)).toEqual([
+      "Noor",
+      "ayla",
+      "Bram",
+    ]);
+  });
+
+  it("sorts alphabetically, ignoring case, when asked to", () => {
+    expect(
+      orderStudents({ students, student_order: "name" }).map((s) => s.name),
+    ).toEqual(["ayla", "Bram", "Noor"]);
+  });
+
+  it("does not reorder the configuration itself", () => {
+    orderStudents({ students, student_order: "name" });
+    expect(students[0].name).toBe("Noor");
+  });
+
+  it("accepts a single child in the flat shape", () => {
+    expect(
+      orderStudents({ name: "Noor", week_entity: "sensor.noor" }),
+    ).toHaveLength(1);
+  });
+
+  it("rejects an unknown order", () => {
+    expect(() => validateConfig({ students, student_order: "age" })).toThrow(
+      /student_order/,
+    );
   });
 });

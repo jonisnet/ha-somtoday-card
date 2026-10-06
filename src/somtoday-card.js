@@ -12,6 +12,7 @@ import {
   lessonDeviation,
   normalizeStudents,
   normalizeWeekDays,
+  orderStudents,
   sortHomework,
   subjectColor,
   validateConfig,
@@ -19,7 +20,10 @@ import {
 } from "./helpers.js";
 import { TRANSLATIONS } from "./translations.js";
 
-const VERSION = "0.1.2";
+const VERSION = "0.2.0";
+// Views where every child can be shown side by side; the others are per child.
+const DAY_VIEWS = ["day", "tomorrow"];
+const ALL_STUDENTS = -1;
 const getLit = () => {
   const base =
     customElements.get("hui-masonry-view") ||
@@ -106,6 +110,18 @@ class SomtodayCard extends LitElement {
       color: var(--secondary-text-color);
       font-size: 0.82rem;
     }
+    .students-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 10px;
+    }
+    .student-column {
+      min-width: 0;
+    }
+    .student-name {
+      padding: 0 4px 6px;
+      font-weight: 600;
+    }
     .student-tabs,
     .view-tabs {
       display: flex;
@@ -123,6 +139,14 @@ class SomtodayCard extends LitElement {
     .view-tabs .tab {
       padding: 7px 9px;
       font-size: 0.88rem;
+    }
+    .student-tabs {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--divider-color);
+    }
+    .student-tabs .tab {
+      padding: 5px 10px;
+      font-size: 0.82rem;
     }
     button {
       font: inherit;
@@ -435,8 +459,28 @@ class SomtodayCard extends LitElement {
   _state(id) {
     return id ? this._hass?.states?.[id] : null;
   }
+  _students() {
+    return orderStudents(this._config);
+  }
+  // "All children" only exists for the day views, only when the option is on and
+  // there is more than one child to show.
+  _allAvailable() {
+    return (
+      this._config.show_all_students === true &&
+      this._students().length > 1 &&
+      DAY_VIEWS.includes(this._view)
+    );
+  }
+  _showingAll() {
+    return this._studentIndex === ALL_STUDENTS && this._allAvailable();
+  }
+  // Index of the child actually shown. "All" falls back to the first child on
+  // views that are per child, so switching to Week never shows an empty card.
+  _activeIndex() {
+    return this._studentIndex === ALL_STUDENTS ? 0 : this._studentIndex;
+  }
   _student() {
-    return normalizeStudents(this._config)[this._studentIndex] || {};
+    return this._students()[this._activeIndex()] || {};
   }
   _colors() {
     return this._config.subject_colors || {};
@@ -444,34 +488,19 @@ class SomtodayCard extends LitElement {
 
   render() {
     if (!this._config || !this._hass) return html``;
-    const students = normalizeStudents(this._config);
+    const students = this._students();
     const student = this._student();
+    const all = this._showingAll();
     return html`<ha-card>
       <div class="header">
         <ha-icon icon="mdi:school-outline"></ha-icon>
         <div class="heading">
           <h2>${this._config.title}</h2>
-          <div class="subtitle">${student.name || this._t(this._view)}</div>
+          <div class="subtitle">
+            ${all ? this._t("all_students") : student.name || this._t(this._view)}
+          </div>
         </div>
       </div>
-      ${
-        students.length > 1
-          ? html`<div class="student-tabs">
-              ${students.map(
-                (item, index) =>
-                  html`<button
-                    class="tab ${index === this._studentIndex ? "active" : ""}"
-                    @click=${() => {
-                      this._studentIndex = index;
-                      this.requestUpdate();
-                    }}
-                  >
-                    ${item.name || `Student ${index + 1}`}
-                  </button>`,
-              )}
-            </div>`
-          : ""
-      }
       ${
         this._config.show_view_tabs !== false
           ? html`<div class="view-tabs">
@@ -490,9 +519,51 @@ class SomtodayCard extends LitElement {
             </div>`
           : ""
       }
-      <div class="content">${this._renderView(student)}</div>
+      ${students.length > 1 ? this._renderStudentTabs(students) : ""}
+      <div class="content">
+        ${all ? this._renderAllStudents(students) : this._renderView(student)}
+      </div>
       ${this._renderDialog()}
     </ha-card>`;
+  }
+
+  // The children sit under the view buttons as a second, smaller row: the view is
+  // the main choice, the child narrows it down. With one child there is nothing to
+  // choose, so the row is left out entirely.
+  _renderStudentTabs(students) {
+    const active = this._showingAll() ? ALL_STUDENTS : this._activeIndex();
+    const tab = (index, label) =>
+      html`<button
+        class="tab ${index === active ? "active" : ""}"
+        @click=${() => {
+          this._studentIndex = index;
+          this.requestUpdate();
+        }}
+      >
+        ${label}
+      </button>`;
+    return html`<div class="student-tabs">
+      ${this._allAvailable() ? tab(ALL_STUDENTS, this._t("all_students")) : ""}
+      ${students.map((item, index) =>
+        tab(index, item.name || `${this._t("student")} ${index + 1}`),
+      )}
+    </div>`;
+  }
+
+  // Today or tomorrow for every child, one column each, so a parent sees at a
+  // glance who is where. Columns wrap underneath each other on a narrow card.
+  _renderAllStudents(students) {
+    return html`<div class="students-grid">
+      ${students.map(
+        (student, index) =>
+          html`<div class="student-column">
+            <div class="student-name">
+              ${student.name || `${this._t("student")} ${index + 1}`}
+            </div>
+            ${this._renderView(student)}
+          </div>`,
+      )}
+    </div>`;
   }
 
   _renderView(student) {
@@ -846,12 +917,46 @@ class SomtodayCardEditor extends LitElement {
     h3 {
       margin: 4px 0;
     }
+    .student-head {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .student-head h3 {
+      flex: 1;
+    }
+    .move {
+      border: 0;
+      border-radius: 50%;
+      background: transparent;
+      color: var(--primary-text-color);
+      cursor: pointer;
+      padding: 6px;
+      display: inline-flex;
+    }
+    .move:disabled {
+      opacity: 0.3;
+      cursor: default;
+    }
+    .help {
+      color: var(--secondary-text-color);
+      font-size: 0.85rem;
+      margin: -4px 0 0;
+    }
   `;
   setConfig(config) {
     this._config = { ...config, students: normalizeStudents(config) };
   }
   _set(key, value) {
     this._config = { ...this._config, [key]: value };
+    fireConfigChanged(this, this._config);
+  }
+  _moveStudent(index, delta) {
+    const students = [...this._config.students];
+    const target = index + delta;
+    if (target < 0 || target >= students.length) return;
+    [students[index], students[target]] = [students[target], students[index]];
+    this._config = { ...this._config, students };
     fireConfigChanged(this, this._config);
   }
   _studentSet(index, key, value) {
@@ -876,6 +981,9 @@ class SomtodayCardEditor extends LitElement {
       ["next_week_entity", "Next week sensor"],
       ["upcoming_work_entity", "Upcoming schoolwork sensor"],
     ];
+    const students = this._config.students || [];
+    const several = students.length > 1;
+    const manual = this._config.student_order !== "name";
     return html`<div class="editor">
       <ha-textfield
         label="Title"
@@ -887,10 +995,33 @@ class SomtodayCardEditor extends LitElement {
         .value=${this._config.default_view || "week"}
         @selected=${(event) => this._set("default_view", event.target.value)}
         >${VIEWS.map((view) => html`<mwc-list-item .value=${view}>${view}</mwc-list-item>`)}</ha-select
-      >${(this._config.students || []).map(
+      >${several
+        ? html`<ha-formfield label="Show all children side by side on Today and Tomorrow">
+              <ha-switch
+                .checked=${this._config.show_all_students === true}
+                @change=${(event) => this._set("show_all_students", event.target.checked)}
+              ></ha-switch>
+            </ha-formfield>
+            <ha-select
+              label="Order of the children"
+              .value=${manual ? "manual" : "name"}
+              @selected=${(event) => this._set("student_order", event.target.value)}
+              @closed=${(event) => event.stopPropagation()}
+            >
+              <mwc-list-item value="manual">Own order</mwc-list-item>
+              <mwc-list-item value="name">Alphabetical</mwc-list-item>
+            </ha-select>
+            ${manual ? html`<p class="help">Use the arrows next to each child to change the order.</p>` : ""}`
+        : ""}${students.map(
         (student, index) =>
           html`<div class="student">
-            <h3>${student.name || `Student ${index + 1}`}</h3>
+            <div class="student-head">
+              <h3>${student.name || `Student ${index + 1}`}</h3>
+              ${several && manual
+                ? html`<button class="move" title="Move up" aria-label="Move up" ?disabled=${index === 0} @click=${() => this._moveStudent(index, -1)}><ha-icon icon="mdi:arrow-up"></ha-icon></button>
+                    <button class="move" title="Move down" aria-label="Move down" ?disabled=${index === students.length - 1} @click=${() => this._moveStudent(index, 1)}><ha-icon icon="mdi:arrow-down"></ha-icon></button>`
+                : ""}
+            </div>
             <ha-textfield
               label="Student name"
               .value=${student.name || ""}

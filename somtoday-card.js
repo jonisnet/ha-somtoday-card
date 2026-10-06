@@ -1,4 +1,4 @@
-/* Somtoday Card v0.1.2 */
+/* Somtoday Card v0.2.0 */
 (() => {
   // src/helpers.js
   var VIEWS = ["day", "tomorrow", "week", "homework", "tests"];
@@ -16,6 +16,9 @@
     }
     if (config.default_view && !VIEWS.includes(config.default_view)) {
       throw new Error(`Unknown default_view: ${config.default_view}`);
+    }
+    if (config.student_order && !STUDENT_ORDERS.includes(config.student_order)) {
+      throw new Error(`Unknown student_order: ${config.student_order}`);
     }
     return true;
   }
@@ -104,6 +107,16 @@
     const student = {};
     for (const key of keys) if (config[key]) student[key] = config[key];
     return Object.keys(student).length ? [student] : [];
+  }
+  var STUDENT_ORDERS = ["manual", "name"];
+  function orderStudents(config = {}) {
+    const students = normalizeStudents(config);
+    if (config.student_order !== "name") return students;
+    return [...students].sort(
+      (a, b) => (a.name || "").localeCompare(b.name || "", void 0, {
+        sensitivity: "base"
+      })
+    );
   }
   function parseTimestamp(value) {
     if (!value) return null;
@@ -288,6 +301,8 @@
       weeks: "weeks",
       homework: "Homework",
       tests: "Tests",
+      all_students: "All children",
+      student: "Child",
       test: "Test",
       schoolwork: "Schoolwork",
       no_data: "No schedule data available",
@@ -337,6 +352,8 @@
       weeks: "weken",
       homework: "Huiswerk",
       tests: "Toetsen",
+      all_students: "Alle kinderen",
+      student: "Kind",
       test: "Toets",
       schoolwork: "Schoolwerk",
       no_data: "Geen roostergegevens beschikbaar",
@@ -377,7 +394,9 @@
   };
 
   // src/somtoday-card.js
-  var VERSION = "0.1.2";
+  var VERSION = "0.2.0";
+  var DAY_VIEWS = ["day", "tomorrow"];
+  var ALL_STUDENTS = -1;
   var getLit = () => {
     const base = customElements.get("hui-masonry-view") || customElements.get("ha-panel-lovelace") || customElements.get("ha-app");
     const LitElement2 = base ? Object.getPrototypeOf(base) : window.LitElement;
@@ -454,6 +473,18 @@
       color: var(--secondary-text-color);
       font-size: 0.82rem;
     }
+    .students-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 10px;
+    }
+    .student-column {
+      min-width: 0;
+    }
+    .student-name {
+      padding: 0 4px 6px;
+      font-weight: 600;
+    }
     .student-tabs,
     .view-tabs {
       display: flex;
@@ -471,6 +502,14 @@
     .view-tabs .tab {
       padding: 7px 9px;
       font-size: 0.88rem;
+    }
+    .student-tabs {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--divider-color);
+    }
+    .student-tabs .tab {
+      padding: 5px 10px;
+      font-size: 0.82rem;
     }
     button {
       font: inherit;
@@ -771,37 +810,43 @@
     _state(id) {
       return id ? this._hass?.states?.[id] : null;
     }
+    _students() {
+      return orderStudents(this._config);
+    }
+    // "All children" only exists for the day views, only when the option is on and
+    // there is more than one child to show.
+    _allAvailable() {
+      return this._config.show_all_students === true && this._students().length > 1 && DAY_VIEWS.includes(this._view);
+    }
+    _showingAll() {
+      return this._studentIndex === ALL_STUDENTS && this._allAvailable();
+    }
+    // Index of the child actually shown. "All" falls back to the first child on
+    // views that are per child, so switching to Week never shows an empty card.
+    _activeIndex() {
+      return this._studentIndex === ALL_STUDENTS ? 0 : this._studentIndex;
+    }
     _student() {
-      return normalizeStudents(this._config)[this._studentIndex] || {};
+      return this._students()[this._activeIndex()] || {};
     }
     _colors() {
       return this._config.subject_colors || {};
     }
     render() {
       if (!this._config || !this._hass) return html``;
-      const students = normalizeStudents(this._config);
+      const students = this._students();
       const student = this._student();
+      const all = this._showingAll();
       return html`<ha-card>
       <div class="header">
         <ha-icon icon="mdi:school-outline"></ha-icon>
         <div class="heading">
           <h2>${this._config.title}</h2>
-          <div class="subtitle">${student.name || this._t(this._view)}</div>
+          <div class="subtitle">
+            ${all ? this._t("all_students") : student.name || this._t(this._view)}
+          </div>
         </div>
       </div>
-      ${students.length > 1 ? html`<div class="student-tabs">
-              ${students.map(
-        (item, index) => html`<button
-                    class="tab ${index === this._studentIndex ? "active" : ""}"
-                    @click=${() => {
-          this._studentIndex = index;
-          this.requestUpdate();
-        }}
-                  >
-                    ${item.name || `Student ${index + 1}`}
-                  </button>`
-      )}
-            </div>` : ""}
       ${this._config.show_view_tabs !== false ? html`<div class="view-tabs">
               ${VIEWS.map(
         (view) => html`<button
@@ -815,9 +860,47 @@
                   </button>`
       )}
             </div>` : ""}
-      <div class="content">${this._renderView(student)}</div>
+      ${students.length > 1 ? this._renderStudentTabs(students) : ""}
+      <div class="content">
+        ${all ? this._renderAllStudents(students) : this._renderView(student)}
+      </div>
       ${this._renderDialog()}
     </ha-card>`;
+    }
+    // The children sit under the view buttons as a second, smaller row: the view is
+    // the main choice, the child narrows it down. With one child there is nothing to
+    // choose, so the row is left out entirely.
+    _renderStudentTabs(students) {
+      const active = this._showingAll() ? ALL_STUDENTS : this._activeIndex();
+      const tab = (index, label) => html`<button
+        class="tab ${index === active ? "active" : ""}"
+        @click=${() => {
+        this._studentIndex = index;
+        this.requestUpdate();
+      }}
+      >
+        ${label}
+      </button>`;
+      return html`<div class="student-tabs">
+      ${this._allAvailable() ? tab(ALL_STUDENTS, this._t("all_students")) : ""}
+      ${students.map(
+        (item, index) => tab(index, item.name || `${this._t("student")} ${index + 1}`)
+      )}
+    </div>`;
+    }
+    // Today or tomorrow for every child, one column each, so a parent sees at a
+    // glance who is where. Columns wrap underneath each other on a narrow card.
+    _renderAllStudents(students) {
+      return html`<div class="students-grid">
+      ${students.map(
+        (student, index) => html`<div class="student-column">
+            <div class="student-name">
+              ${student.name || `${this._t("student")} ${index + 1}`}
+            </div>
+            ${this._renderView(student)}
+          </div>`
+      )}
+    </div>`;
     }
     _renderView(student) {
       if (this._view === "week") return this._renderWeek(student);
@@ -1150,12 +1233,46 @@
     h3 {
       margin: 4px 0;
     }
+    .student-head {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .student-head h3 {
+      flex: 1;
+    }
+    .move {
+      border: 0;
+      border-radius: 50%;
+      background: transparent;
+      color: var(--primary-text-color);
+      cursor: pointer;
+      padding: 6px;
+      display: inline-flex;
+    }
+    .move:disabled {
+      opacity: 0.3;
+      cursor: default;
+    }
+    .help {
+      color: var(--secondary-text-color);
+      font-size: 0.85rem;
+      margin: -4px 0 0;
+    }
   `;
     setConfig(config) {
       this._config = { ...config, students: normalizeStudents(config) };
     }
     _set(key, value) {
       this._config = { ...this._config, [key]: value };
+      fireConfigChanged(this, this._config);
+    }
+    _moveStudent(index, delta) {
+      const students = [...this._config.students];
+      const target = index + delta;
+      if (target < 0 || target >= students.length) return;
+      [students[index], students[target]] = [students[target], students[index]];
+      this._config = { ...this._config, students };
       fireConfigChanged(this, this._config);
     }
     _studentSet(index, key, value) {
@@ -1180,6 +1297,9 @@
         ["next_week_entity", "Next week sensor"],
         ["upcoming_work_entity", "Upcoming schoolwork sensor"]
       ];
+      const students = this._config.students || [];
+      const several = students.length > 1;
+      const manual = this._config.student_order !== "name";
       return html`<div class="editor">
       <ha-textfield
         label="Title"
@@ -1191,9 +1311,28 @@
         .value=${this._config.default_view || "week"}
         @selected=${(event) => this._set("default_view", event.target.value)}
         >${VIEWS.map((view) => html`<mwc-list-item .value=${view}>${view}</mwc-list-item>`)}</ha-select
-      >${(this._config.students || []).map(
+      >${several ? html`<ha-formfield label="Show all children side by side on Today and Tomorrow">
+              <ha-switch
+                .checked=${this._config.show_all_students === true}
+                @change=${(event) => this._set("show_all_students", event.target.checked)}
+              ></ha-switch>
+            </ha-formfield>
+            <ha-select
+              label="Order of the children"
+              .value=${manual ? "manual" : "name"}
+              @selected=${(event) => this._set("student_order", event.target.value)}
+              @closed=${(event) => event.stopPropagation()}
+            >
+              <mwc-list-item value="manual">Own order</mwc-list-item>
+              <mwc-list-item value="name">Alphabetical</mwc-list-item>
+            </ha-select>
+            ${manual ? html`<p class="help">Use the arrows next to each child to change the order.</p>` : ""}` : ""}${students.map(
         (student, index) => html`<div class="student">
-            <h3>${student.name || `Student ${index + 1}`}</h3>
+            <div class="student-head">
+              <h3>${student.name || `Student ${index + 1}`}</h3>
+              ${several && manual ? html`<button class="move" title="Move up" aria-label="Move up" ?disabled=${index === 0} @click=${() => this._moveStudent(index, -1)}><ha-icon icon="mdi:arrow-up"></ha-icon></button>
+                    <button class="move" title="Move down" aria-label="Move down" ?disabled=${index === students.length - 1} @click=${() => this._moveStudent(index, 1)}><ha-icon icon="mdi:arrow-down"></ha-icon></button>` : ""}
+            </div>
             <ha-textfield
               label="Student name"
               .value=${student.name || ""}

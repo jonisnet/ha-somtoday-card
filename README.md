@@ -63,6 +63,23 @@ With more than one child it becomes a `students` list instead, sorted by name so
 they keep their order. Both shapes are accepted, so a single child can be moved
 into a `students` list by hand at any time.
 
+### Several children
+
+With more than one child, a second row of buttons appears under Today, Tomorrow,
+Week, Homework and Tests: one per child. With a single child that row is not
+there at all.
+
+- **Order.** `student_order: manual` keeps the order of the `students` list,
+  and the editor has arrows to move a child up or down. `student_order: name`
+  sorts the children alphabetically instead.
+- **All children at once.** Turn on _Show all children side by side on Today and
+  Tomorrow_ in the editor (`show_all_students: true`, off by default) and the
+  row gets an _All children_ button for those two views: every child's day in
+  its own column, wrapping underneath each other on a narrow screen. Week,
+  Homework and Tests stay per child.
+
+![Today for two children side by side](https://raw.githubusercontent.com/jonisnet/ha-somtoday-card/main/preview/all-children-dark.png)
+
 Everything can still be edited afterwards, and anything not detected — an older
 Home Assistant without an entity registry, for instance — can be filled in by
 hand. Only one of `week_entity`, `today_entity` or `day_entity` is required.
@@ -78,14 +95,16 @@ subject_colors:
 
 ### Options
 
-| Option           | Description                                      |
-| ---------------- | ------------------------------------------------ |
-| `title`          | Card heading                                     |
-| `default_view`   | `day`, `week`, `homework`, or `tests`            |
-| `show_view_tabs` | Show the in-card view switcher                   |
-| `name`           | Pupil name in the heading, for a single child    |
-| `students`       | One entry per child, when there is more than one |
-| `subject_colors` | Subject name to CSS color mapping                |
+| Option              | Description                                      |
+| ------------------- | ------------------------------------------------ |
+| `title`             | Card heading                                     |
+| `default_view`      | `day`, `week`, `homework`, or `tests`            |
+| `show_view_tabs`    | Show the in-card view switcher                   |
+| `name`              | Pupil name in the heading, for a single child    |
+| `students`          | One entry per child, when there is more than one |
+| `student_order`     | `manual` (default, the list order) or `name`     |
+| `show_all_students` | Offer "All children" on Today and Tomorrow       |
+| `subject_colors`    | Subject name to CSS color mapping                |
 
 Mappings take precedence. Unmapped, school-specific abbreviations receive a
 stable generated accent, so the card never depends on a hardcoded subject list.
