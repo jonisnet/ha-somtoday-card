@@ -224,6 +224,7 @@ describe("auto-detecting students from the entity registry", () => {
     next_test: "volgende_toets",
     base_week: "basisrooster",
     last_update: "laatste_update",
+    schedule_changes: "roosterwijzigingen",
   };
 
   it("fills every card field for a single student", () => {

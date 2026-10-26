@@ -1,4 +1,11 @@
-export const VIEWS = ["day", "tomorrow", "week", "homework", "tests"];
+export const VIEWS = [
+  "day",
+  "tomorrow",
+  "week",
+  "homework",
+  "tests",
+  "changes",
+];
 
 export function validateConfig(config) {
   if (!config || typeof config !== "object")
@@ -40,6 +47,7 @@ export const STUDENT_ENTITY_KEYS = {
   next_test_entity: "next_test",
   base_schedule_entity: "base_week",
   last_update_entity: "last_update",
+  changes_entity: "schedule_changes",
 };
 
 const SOMTODAY_PLATFORM = "somtoday";
@@ -141,6 +149,7 @@ export function normalizeStudents(config = {}) {
     "next_week_entity",
     "upcoming_work_entity",
     "last_update_entity",
+    "changes_entity",
   ];
   const student = {};
   for (const key of keys) if (config[key]) student[key] = config[key];

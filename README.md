@@ -74,9 +74,17 @@ there at all.
   sorts the children alphabetically instead.
 - **All children at once.** Turn on _Show all children side by side on Today and
   Tomorrow_ in the editor (`show_all_students: true`, off by default) and the
-  row gets an _All children_ button for those two views: every child's day in
-  its own column, wrapping underneath each other on a narrow screen. Week,
-  Homework and Tests stay per child.
+  row gets an _All children_ button for those two views and for Changes: every
+  child in its own column, wrapping underneath each other on a narrow screen.
+  Week, Homework and Tests stay per child.
+
+### Changes
+
+The _Changes_ view lists every timetable change of the last fourteen days,
+newest first: the lesson, what changed, what it was before, and when the change
+came in. Somtoday does not say when a school changed a lesson, so "came in" is
+the moment the integration first saw it — at most one poll interval later. It
+needs the _Schedule changes_ sensor from Somtoday 0.1.9 or newer.
 
 ![Today for two children side by side](https://raw.githubusercontent.com/jonisnet/ha-somtoday-card/main/preview/all-children-dark.png)
 
@@ -95,16 +103,16 @@ subject_colors:
 
 ### Options
 
-| Option              | Description                                      |
-| ------------------- | ------------------------------------------------ |
-| `title`             | Card heading                                     |
-| `default_view`      | `day`, `week`, `homework`, or `tests`            |
-| `show_view_tabs`    | Show the in-card view switcher                   |
-| `name`              | Pupil name in the heading, for a single child    |
-| `students`          | One entry per child, when there is more than one |
-| `student_order`     | `manual` (default, the list order) or `name`     |
-| `show_all_students` | Offer "All children" on Today and Tomorrow       |
-| `subject_colors`    | Subject name to CSS color mapping                |
+| Option              | Description                                                 |
+| ------------------- | ----------------------------------------------------------- |
+| `title`             | Card heading                                                |
+| `default_view`      | `day`, `tomorrow`, `week`, `homework`, `tests` or `changes` |
+| `show_view_tabs`    | Show the in-card view switcher                              |
+| `name`              | Pupil name in the heading, for a single child               |
+| `students`          | One entry per child, when there is more than one            |
+| `student_order`     | `manual` (default, the list order) or `name`                |
+| `show_all_students` | Offer "All children" on Today, Tomorrow and Changes         |
+| `subject_colors`    | Subject name to CSS color mapping                           |
 
 Mappings take precedence. Unmapped, school-specific abbreviations receive a
 stable generated accent, so the card never depends on a hardcoded subject list.
@@ -155,6 +163,7 @@ entity names themselves differ per language:
 | Homework         | `open_homework`                              |
 | Tests            | `next_test` and `upcoming_work`              |
 | Own appointments | `planner`                                    |
+| Changes          | `schedule_changes` (Somtoday 0.1.9 or newer) |
 
 Browsing further ahead uses the integration's future-week sensors, which are
 found at runtime through their `week_offset` attribute and need no configuration.

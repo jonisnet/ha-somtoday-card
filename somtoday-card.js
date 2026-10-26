@@ -1,7 +1,14 @@
-/* Somtoday Card v0.2.0 */
+/* Somtoday Card v0.3.0 */
 (() => {
   // src/helpers.js
-  var VIEWS = ["day", "tomorrow", "week", "homework", "tests"];
+  var VIEWS = [
+    "day",
+    "tomorrow",
+    "week",
+    "homework",
+    "tests",
+    "changes"
+  ];
   function validateConfig(config) {
     if (!config || typeof config !== "object")
       throw new Error("Configuration is required");
@@ -34,7 +41,8 @@
     next_lesson_entity: "next_lesson",
     next_test_entity: "next_test",
     base_schedule_entity: "base_week",
-    last_update_entity: "last_update"
+    last_update_entity: "last_update",
+    changes_entity: "schedule_changes"
   };
   var SOMTODAY_PLATFORM = "somtoday";
   var WEEK_ID_PATTERN = /^sensor\.somtoday_.+_(?:deze_week|this_week)(?:_\d+)?$/;
@@ -102,7 +110,8 @@
       "planner_entity",
       "next_week_entity",
       "upcoming_work_entity",
-      "last_update_entity"
+      "last_update_entity",
+      "changes_entity"
     ];
     const student = {};
     for (const key of keys) if (config[key]) student[key] = config[key];
@@ -338,7 +347,20 @@
       delete: "Delete",
       not_allowed: "You are not allowed to edit the planner",
       print: "Print",
-      popup_blocked: "Allow pop-ups to print the timetable"
+      popup_blocked: "Allow pop-ups to print the timetable",
+      changes: "Changes",
+      no_changes: "No timetable changes in the last {days} days",
+      no_changes_sensor: "Needs the Schedule changes sensor (Somtoday 0.1.9 or newer)",
+      came_in: "Came in",
+      lesson: "Lesson",
+      was: "was",
+      change_cancelled: "Cancelled",
+      change_reinstated: "Back on",
+      change_moved: "Moved",
+      change_room_changed: "Different room",
+      change_teacher_changed: "Different teacher",
+      change_added: "Added",
+      change_removed: "Removed"
     },
     nl: {
       title: "Somtoday",
@@ -389,13 +411,26 @@
       delete: "Verwijderen",
       not_allowed: "Je mag deze planning niet wijzigen",
       print: "Afdrukken",
-      popup_blocked: "Sta pop-ups toe om het rooster af te drukken"
+      popup_blocked: "Sta pop-ups toe om het rooster af te drukken",
+      changes: "Wijzigingen",
+      no_changes: "Geen roosterwijzigingen in de afgelopen {days} dagen",
+      no_changes_sensor: "Hiervoor is de sensor Roosterwijzigingen nodig (Somtoday 0.1.9 of nieuwer)",
+      came_in: "Binnengekomen",
+      lesson: "Les",
+      was: "was",
+      change_cancelled: "Vervallen",
+      change_reinstated: "Gaat toch door",
+      change_moved: "Verplaatst",
+      change_room_changed: "Ander lokaal",
+      change_teacher_changed: "Andere docent",
+      change_added: "Toegevoegd",
+      change_removed: "Verwijderd"
     }
   };
 
   // src/somtoday-card.js
-  var VERSION = "0.2.0";
-  var DAY_VIEWS = ["day", "tomorrow"];
+  var VERSION = "0.3.0";
+  var DAY_VIEWS = ["day", "tomorrow", "changes"];
   var ALL_STUDENTS = -1;
   var getLit = () => {
     const base = customElements.get("hui-masonry-view") || customElements.get("ha-panel-lovelace") || customElements.get("ha-app");
@@ -697,6 +732,25 @@
     .item.urgent {
       border-left-color: var(--warning-color);
     }
+    .item.change {
+      cursor: default;
+      border-left-color: var(--subject-color, var(--primary-color));
+    }
+    .item.change:hover {
+      transform: none;
+      box-shadow: none;
+    }
+    .change.cancelled .badge,
+    .change.removed .badge {
+      color: var(--error-color);
+    }
+    .came-in {
+      align-items: center;
+      gap: 4px;
+    }
+    .came-in ha-icon {
+      --mdc-icon-size: 14px;
+    }
     .description {
       margin-top: 6px;
       color: var(--secondary-text-color);
@@ -907,6 +961,7 @@
       if (this._view === "day") return this._renderDay(student);
       if (this._view === "tomorrow") return this._renderTomorrow(student);
       if (this._view === "homework") return this._renderHomework(student);
+      if (this._view === "changes") return this._renderChanges(student);
       return this._renderTests(student);
     }
     _renderWeek(student) {
@@ -1144,6 +1199,43 @@
         return this._empty(state ? "unavailable" : "no_tests");
       return this._itemButton(state.attributes, "test");
     }
+    // Changes as they came in, newest first. Somtoday does not say when a lesson
+    // was changed; "came in" is when the integration first saw it, which is the
+    // best moment there is.
+    _renderChanges(student) {
+      const state = this._state(student.changes_entity) || this._relatedState(student, (candidate) => Array.isArray(candidate.attributes?.changes));
+      if (!state) return this._empty("no_changes_sensor");
+      if (state.state === "unavailable") return this._empty("unavailable");
+      const changes = state.attributes.changes || [];
+      if (!changes.length) {
+        return html`<div class="empty">
+        <ha-icon icon="mdi:calendar-check-outline"></ha-icon>${this._t("no_changes").replace("{days}", state.attributes.retention_days ?? 14)}
+      </div>`;
+      }
+      return html`<div class="list">${changes.map((change) => this._changeItem(change))}</div>`;
+    }
+    _changeItem(change) {
+      const locale = this._locale();
+      const span = (start, end) => `${formatDate(start, locale)} ${formatTime(start, locale)}\u2013${formatTime(end, locale)}`;
+      const previous = change.previous || {};
+      const was = change.type === "moved" && previous.start ? span(previous.start, previous.end) : change.type === "room_changed" ? previous.location : change.type === "teacher_changed" ? previous.teacher : null;
+      const color = subjectColor(change.subject || change.subject_short, this._colors());
+      return html`<div class="item change ${change.type}" style=${color ? `--subject-color:${color}` : ""}>
+      <span class="item-head"
+        ><span>${change.subject || change.subject_short || "\u2014"}</span
+        ><span class="badge">${this._t(`change_${change.type}`)}</span></span
+      >
+      <div class="meta">
+        <span>${this._t("lesson")}: ${span(change.start, change.end)}${change.period_start ? ` \xB7 ${this._t("period")} ${change.period_start}` : ""}</span>
+        ${change.location ? html`<span>${change.location}</span>` : ""}
+        ${change.teacher ? html`<span>${change.teacher}</span>` : ""}
+      </div>
+      ${was ? html`<div class="meta"><span>${this._t("was")}: ${was}</span></div>` : ""}
+      <div class="meta came-in">
+        <ha-icon icon="mdi:clock-outline"></ha-icon><span>${this._t("came_in")}: ${formatDate(change.detected_at, locale)} ${formatTime(change.detected_at, locale)}</span>
+      </div>
+    </div>`;
+    }
     _itemButton(item, type) {
       return html`<button
       class="item ${type === "test" ? "urgent" : ""}"
@@ -1295,7 +1387,8 @@
         ["base_schedule_entity", "Base schedule sensor (optional)"],
         ["planner_entity", "Planner sensor (optional)"],
         ["next_week_entity", "Next week sensor"],
-        ["upcoming_work_entity", "Upcoming schoolwork sensor"]
+        ["upcoming_work_entity", "Upcoming schoolwork sensor"],
+        ["changes_entity", "Schedule changes sensor"]
       ];
       const students = this._config.students || [];
       const several = students.length > 1;

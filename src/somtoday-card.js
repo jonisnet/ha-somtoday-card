@@ -20,9 +20,9 @@ import {
 } from "./helpers.js";
 import { TRANSLATIONS } from "./translations.js";
 
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 // Views where every child can be shown side by side; the others are per child.
-const DAY_VIEWS = ["day", "tomorrow"];
+const DAY_VIEWS = ["day", "tomorrow", "changes"];
 const ALL_STUDENTS = -1;
 const getLit = () => {
   const base =
@@ -334,6 +334,25 @@ class SomtodayCard extends LitElement {
     .item.urgent {
       border-left-color: var(--warning-color);
     }
+    .item.change {
+      cursor: default;
+      border-left-color: var(--subject-color, var(--primary-color));
+    }
+    .item.change:hover {
+      transform: none;
+      box-shadow: none;
+    }
+    .change.cancelled .badge,
+    .change.removed .badge {
+      color: var(--error-color);
+    }
+    .came-in {
+      align-items: center;
+      gap: 4px;
+    }
+    .came-in ha-icon {
+      --mdc-icon-size: 14px;
+    }
     .description {
       margin-top: 6px;
       color: var(--secondary-text-color);
@@ -571,6 +590,7 @@ class SomtodayCard extends LitElement {
     if (this._view === "day") return this._renderDay(student);
     if (this._view === "tomorrow") return this._renderTomorrow(student);
     if (this._view === "homework") return this._renderHomework(student);
+    if (this._view === "changes") return this._renderChanges(student);
     return this._renderTests(student);
   }
 
@@ -821,6 +841,54 @@ class SomtodayCard extends LitElement {
     return this._itemButton(state.attributes, "test");
   }
 
+  // Changes as they came in, newest first. Somtoday does not say when a lesson
+  // was changed; "came in" is when the integration first saw it, which is the
+  // best moment there is.
+  _renderChanges(student) {
+    const state =
+      this._state(student.changes_entity) ||
+      this._relatedState(student, (candidate) => Array.isArray(candidate.attributes?.changes));
+    if (!state) return this._empty("no_changes_sensor");
+    if (state.state === "unavailable") return this._empty("unavailable");
+    const changes = state.attributes.changes || [];
+    if (!changes.length) {
+      return html`<div class="empty">
+        <ha-icon icon="mdi:calendar-check-outline"></ha-icon>${this._t("no_changes").replace("{days}", state.attributes.retention_days ?? 14)}
+      </div>`;
+    }
+    return html`<div class="list">${changes.map((change) => this._changeItem(change))}</div>`;
+  }
+
+  _changeItem(change) {
+    const locale = this._locale();
+    const span = (start, end) => `${formatDate(start, locale)} ${formatTime(start, locale)}–${formatTime(end, locale)}`;
+    const previous = change.previous || {};
+    const was =
+      change.type === "moved" && previous.start
+        ? span(previous.start, previous.end)
+        : change.type === "room_changed"
+          ? previous.location
+          : change.type === "teacher_changed"
+            ? previous.teacher
+            : null;
+    const color = subjectColor(change.subject || change.subject_short, this._colors());
+    return html`<div class="item change ${change.type}" style=${color ? `--subject-color:${color}` : ""}>
+      <span class="item-head"
+        ><span>${change.subject || change.subject_short || "—"}</span
+        ><span class="badge">${this._t(`change_${change.type}`)}</span></span
+      >
+      <div class="meta">
+        <span>${this._t("lesson")}: ${span(change.start, change.end)}${change.period_start ? ` · ${this._t("period")} ${change.period_start}` : ""}</span>
+        ${change.location ? html`<span>${change.location}</span>` : ""}
+        ${change.teacher ? html`<span>${change.teacher}</span>` : ""}
+      </div>
+      ${was ? html`<div class="meta"><span>${this._t("was")}: ${was}</span></div>` : ""}
+      <div class="meta came-in">
+        <ha-icon icon="mdi:clock-outline"></ha-icon><span>${this._t("came_in")}: ${formatDate(change.detected_at, locale)} ${formatTime(change.detected_at, locale)}</span>
+      </div>
+    </div>`;
+  }
+
   _itemButton(item, type) {
     return html`<button
       class="item ${type === "test" ? "urgent" : ""}"
@@ -980,6 +1048,7 @@ class SomtodayCardEditor extends LitElement {
       ["planner_entity", "Planner sensor (optional)"],
       ["next_week_entity", "Next week sensor"],
       ["upcoming_work_entity", "Upcoming schoolwork sensor"],
+      ["changes_entity", "Schedule changes sensor"],
     ];
     const students = this._config.students || [];
     const several = students.length > 1;

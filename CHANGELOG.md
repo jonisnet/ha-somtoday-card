@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0
+
+- **A Changes view.** Every timetable change of the last fourteen days, newest
+  first: the lesson, what changed (dropped, moved, another room or teacher),
+  what it was before, and when the change came in. Needs the integration's new
+  _Schedule changes_ sensor (Somtoday 0.1.9); an existing card finds it by
+  itself. Also available as _All children_ when that option is on.
+
 ## 0.2.0
 
 - **All children on one card.** With `show_all_students: true` (a switch in the
