@@ -136,6 +136,14 @@ The card works without `base_schedule_entity`, which is disabled by default in
 the integration. Unknown, unavailable and missing optional entities are handled
 without breaking the card.
 
+## Updates
+
+After an update through HACS the card reloads the dashboard by itself, once, as
+soon as it notices the new version — when the dashboard loads, when the app or
+tab comes back into view, or within fifteen minutes on a screen that stays open.
+No clearing of the browser cache is needed. While a dashboard is being edited it
+shows a _Reload_ button instead of reloading.
+
 ## Responsive layout
 
 The week is horizontal while the card has enough room. A `ResizeObserver` measures the card itself—not the browser—and changes to a vertical day layout below 620 px.

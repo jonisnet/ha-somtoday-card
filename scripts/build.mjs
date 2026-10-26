@@ -16,4 +16,7 @@ await build({
   target: ["es2022"],
   legalComments: "none",
   banner: { js: `/* Somtoday Card v${version} */` },
+  // The card compares this against the banner of the file the server currently
+  // serves, so it must come from the same place as the banner.
+  define: { __CARD_VERSION__: JSON.stringify(version) },
 });

@@ -50,6 +50,8 @@ export const TRANSLATIONS = {
     print: "Print",
     popup_blocked: "Allow pop-ups to print the timetable",
     changes: "Changes",
+    update_available: "Somtoday Card {version} is installed",
+    reload: "Reload",
     no_changes: "No timetable changes in the last {days} days",
     no_changes_sensor:
       "Needs the Schedule changes sensor (Somtoday 0.1.9 or newer)",
@@ -115,6 +117,8 @@ export const TRANSLATIONS = {
     print: "Afdrukken",
     popup_blocked: "Sta pop-ups toe om het rooster af te drukken",
     changes: "Wijzigingen",
+    update_available: "Somtoday Card {version} is geïnstalleerd",
+    reload: "Herladen",
     no_changes: "Geen roosterwijzigingen in de afgelopen {days} dagen",
     no_changes_sensor:
       "Hiervoor is de sensor Roosterwijzigingen nodig (Somtoday 0.1.9 of nieuwer)",

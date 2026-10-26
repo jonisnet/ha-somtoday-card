@@ -1,4 +1,4 @@
-/* Somtoday Card v0.3.0 */
+/* Somtoday Card v0.3.1 */
 (() => {
   // src/helpers.js
   var VIEWS = [
@@ -295,6 +295,15 @@
     }
     return `hsl(${Math.abs(hash) % 360} 62% 48%)`;
   }
+  var BUNDLE_BANNER = /Somtoday Card v(\d+\.\d+\.\d+[^\s*]*)/;
+  function bundleVersion(text = "") {
+    return BUNDLE_BANNER.exec(String(text).slice(0, 400))?.[1] || null;
+  }
+  function cardResourceUrl(resources = []) {
+    return resources.find(
+      (resource) => /\/somtoday-card\.js(\?|$)/.test(String(resource?.url || ""))
+    )?.url || null;
+  }
 
   // src/translations.js
   var TRANSLATIONS = {
@@ -349,6 +358,8 @@
       print: "Print",
       popup_blocked: "Allow pop-ups to print the timetable",
       changes: "Changes",
+      update_available: "Somtoday Card {version} is installed",
+      reload: "Reload",
       no_changes: "No timetable changes in the last {days} days",
       no_changes_sensor: "Needs the Schedule changes sensor (Somtoday 0.1.9 or newer)",
       came_in: "Came in",
@@ -413,6 +424,8 @@
       print: "Afdrukken",
       popup_blocked: "Sta pop-ups toe om het rooster af te drukken",
       changes: "Wijzigingen",
+      update_available: "Somtoday Card {version} is ge\xEFnstalleerd",
+      reload: "Herladen",
       no_changes: "Geen roosterwijzigingen in de afgelopen {days} dagen",
       no_changes_sensor: "Hiervoor is de sensor Roosterwijzigingen nodig (Somtoday 0.1.9 of nieuwer)",
       came_in: "Binnengekomen",
@@ -429,7 +442,7 @@
   };
 
   // src/somtoday-card.js
-  var VERSION = "0.3.0";
+  var VERSION = true ? "0.3.1" : "dev";
   var DAY_VIEWS = ["day", "tomorrow", "changes"];
   var ALL_STUDENTS = -1;
   var getLit = () => {
@@ -442,6 +455,58 @@
     };
   };
   var { LitElement, html, css } = getLit();
+  var UPDATE_CHECK_INTERVAL = 15 * 60 * 1e3;
+  var RELOAD_GUARD_KEY = "somtoday-card-reloaded-for";
+  var updateState = { lastCheck: 0, running: false, pending: null, cards: /* @__PURE__ */ new Set() };
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") updateState.lastCheck = 0;
+  });
+  function readSession(key) {
+    try {
+      return window.sessionStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  }
+  function writeSession(key, value) {
+    try {
+      window.sessionStorage.setItem(key, value);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  async function checkForNewerCard(hass) {
+    const now = Date.now();
+    if (updateState.running || updateState.pending || VERSION === "dev") return;
+    if (now - updateState.lastCheck < UPDATE_CHECK_INTERVAL) return;
+    if (document.visibilityState === "hidden") return;
+    updateState.lastCheck = now;
+    updateState.running = true;
+    try {
+      let url = null;
+      try {
+        url = cardResourceUrl(await hass.callWS({ type: "lovelace/resources" }));
+      } catch {
+      }
+      url ||= performance.getEntriesByType("resource").map((entry) => entry.name).find((name) => /\/somtoday-card\.js(\?|$)/.test(name));
+      if (!url) return;
+      const response = await fetch(url, { cache: "no-cache" });
+      if (!response.ok) return;
+      const served = bundleVersion((await response.text()).slice(0, 400));
+      if (!served || served === VERSION) return;
+      const editing = new URLSearchParams(window.location.search).has("edit");
+      if (!editing && readSession(RELOAD_GUARD_KEY) !== served && writeSession(RELOAD_GUARD_KEY, served)) {
+        window.location.reload();
+        return;
+      }
+      updateState.pending = served;
+      for (const card of updateState.cards) card.requestUpdate();
+    } catch {
+    } finally {
+      updateState.running = false;
+    }
+  }
   function fireConfigChanged(element, config) {
     element.dispatchEvent(
       new CustomEvent("config-changed", {
@@ -575,6 +640,17 @@
     }
     .content {
       padding: 14px;
+    }
+    .update-notice {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 10px 14px 0;
+      padding: 8px 10px;
+      border-radius: 10px;
+      font-size: 0.85rem;
+      background: color-mix(in srgb, var(--primary-color) 14%, transparent);
     }
     .week {
       display: grid;
@@ -832,6 +908,7 @@
       const automaticWeekIds = Object.values(value?.states || {}).filter((state) => Number.isInteger(state.attributes?.week_offset)).map((state) => state.entity_id);
       const relevant = [.../* @__PURE__ */ new Set([...ids, ...automaticWeekIds])].map((id) => `${id}:${value?.states?.[id]?.last_updated || ""}`).join("|");
       this._hass = value;
+      if (value) checkForNewerCard(value);
       if (relevant !== this._lastRelevant) {
         this._lastRelevant = relevant;
         this.requestUpdate();
@@ -842,6 +919,7 @@
     }
     connectedCallback() {
       super.connectedCallback();
+      updateState.cards.add(this);
       this._observer = new ResizeObserver(([entry]) => {
         const compact = entry.contentRect.width < 1e3;
         if (compact !== this._compact) {
@@ -852,6 +930,7 @@
       this._observer.observe(this);
     }
     disconnectedCallback() {
+      updateState.cards.delete(this);
       this._observer?.disconnect();
       super.disconnectedCallback();
     }
@@ -915,6 +994,10 @@
       )}
             </div>` : ""}
       ${students.length > 1 ? this._renderStudentTabs(students) : ""}
+      ${updateState.pending ? html`<div class="update-notice">
+            <span>${this._t("update_available").replace("{version}", updateState.pending)}</span>
+            <button class="tab active" @click=${() => window.location.reload()}>${this._t("reload")}</button>
+          </div>` : ""}
       <div class="content">
         ${all ? this._renderAllStudents(students) : this._renderView(student)}
       </div>

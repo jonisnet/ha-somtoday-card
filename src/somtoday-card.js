@@ -4,6 +4,8 @@ import {
   buildSchoolDayTimeline,
   LESSON_PERIOD_SLOTS,
   buildStubConfig,
+  bundleVersion,
+  cardResourceUrl,
   compareLessonTime,
   findDay,
   formatDate,
@@ -20,7 +22,9 @@ import {
 } from "./helpers.js";
 import { TRANSLATIONS } from "./translations.js";
 
-const VERSION = "0.3.0";
+// Filled in by scripts/build.mjs from package.json; never written by hand.
+// eslint-disable-next-line no-undef
+const VERSION = typeof __CARD_VERSION__ === "string" ? __CARD_VERSION__ : "dev";
 // Views where every child can be shown side by side; the others are per child.
 const DAY_VIEWS = ["day", "tomorrow", "changes"];
 const ALL_STUDENTS = -1;
@@ -38,6 +42,83 @@ const getLit = () => {
 };
 
 const { LitElement, html, css } = getLit();
+
+// ---------------------------------------------------------------------------
+// Picking up a new version by itself
+// ---------------------------------------------------------------------------
+// HACS serves /hacsfiles/ with long cache headers and relies on the new
+// ?hacstag=… it writes into the dashboard resource on every update. That only
+// reaches a page that is loaded from scratch. A dashboard that is already open —
+// the companion app, a wall tablet — keeps running the old card, also across a
+// Home Assistant restart, until someone clears the cache by hand. So the card
+// checks for itself: it asks which resource the dashboard loads now, reads the
+// version from that file's banner and, when it differs, reloads the page once.
+
+const UPDATE_CHECK_INTERVAL = 15 * 60 * 1000;
+const RELOAD_GUARD_KEY = "somtoday-card-reloaded-for";
+const updateState = { lastCheck: 0, running: false, pending: null, cards: new Set() };
+
+document.addEventListener("visibilitychange", () => {
+  // Coming back to the app or tab is exactly when an update may be waiting.
+  if (document.visibilityState === "visible") updateState.lastCheck = 0;
+});
+
+function readSession(key) {
+  try {
+    return window.sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeSession(key, value) {
+  try {
+    window.sessionStorage.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function checkForNewerCard(hass) {
+  const now = Date.now();
+  if (updateState.running || updateState.pending || VERSION === "dev") return;
+  if (now - updateState.lastCheck < UPDATE_CHECK_INTERVAL) return;
+  if (document.visibilityState === "hidden") return;
+  updateState.lastCheck = now;
+  updateState.running = true;
+  try {
+    let url = null;
+    try {
+      url = cardResourceUrl(await hass.callWS({ type: "lovelace/resources" }));
+    } catch {
+      // YAML-mode dashboards and older cores: fall back to what was loaded.
+    }
+    url ||= performance
+      .getEntriesByType("resource")
+      .map((entry) => entry.name)
+      .find((name) => /\/somtoday-card\.js(\?|$)/.test(name));
+    if (!url) return;
+    // no-cache revalidates against the server and refreshes the browser's own
+    // copy too, so the reload below really gets the new file.
+    const response = await fetch(url, { cache: "no-cache" });
+    if (!response.ok) return;
+    const served = bundleVersion((await response.text()).slice(0, 400));
+    if (!served || served === VERSION) return;
+    const editing = new URLSearchParams(window.location.search).has("edit");
+    if (!editing && readSession(RELOAD_GUARD_KEY) !== served && writeSession(RELOAD_GUARD_KEY, served)) {
+      window.location.reload();
+      return;
+    }
+    // Reloading is not possible or did not help: say so instead of looping.
+    updateState.pending = served;
+    for (const card of updateState.cards) card.requestUpdate();
+  } catch {
+    // A failed check is not worth bothering anyone about; try again later.
+  } finally {
+    updateState.running = false;
+  }
+}
 
 function fireConfigChanged(element, config) {
   element.dispatchEvent(
@@ -177,6 +258,17 @@ class SomtodayCard extends LitElement {
     }
     .content {
       padding: 14px;
+    }
+    .update-notice {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 10px 14px 0;
+      padding: 8px 10px;
+      border-radius: 10px;
+      font-size: 0.85rem;
+      background: color-mix(in srgb, var(--primary-color) 14%, transparent);
     }
     .week {
       display: grid;
@@ -444,6 +536,7 @@ class SomtodayCard extends LitElement {
       .map((id) => `${id}:${value?.states?.[id]?.last_updated || ""}`)
       .join("|");
     this._hass = value;
+    if (value) checkForNewerCard(value);
     if (relevant !== this._lastRelevant) {
       this._lastRelevant = relevant;
       this.requestUpdate();
@@ -455,6 +548,7 @@ class SomtodayCard extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
+    updateState.cards.add(this);
     this._observer = new ResizeObserver(([entry]) => {
       const compact = entry.contentRect.width < 1000;
       if (compact !== this._compact) {
@@ -465,6 +559,7 @@ class SomtodayCard extends LitElement {
     this._observer.observe(this);
   }
   disconnectedCallback() {
+    updateState.cards.delete(this);
     this._observer?.disconnect();
     super.disconnectedCallback();
   }
@@ -539,6 +634,12 @@ class SomtodayCard extends LitElement {
           : ""
       }
       ${students.length > 1 ? this._renderStudentTabs(students) : ""}
+      ${updateState.pending
+        ? html`<div class="update-notice">
+            <span>${this._t("update_available").replace("{version}", updateState.pending)}</span>
+            <button class="tab active" @click=${() => window.location.reload()}>${this._t("reload")}</button>
+          </div>`
+        : ""}
       <div class="content">
         ${all ? this._renderAllStudents(students) : this._renderView(student)}
       </div>

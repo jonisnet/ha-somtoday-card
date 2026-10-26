@@ -3,6 +3,8 @@ import {
   buildDayTimeline,
   buildSchoolDayTimeline,
   buildStubConfig,
+  bundleVersion,
+  cardResourceUrl,
   detectStudents,
   formatTime,
   guessWeekEntity,
@@ -440,5 +442,37 @@ describe("order of the children", () => {
     expect(() => validateConfig({ students, student_order: "age" })).toThrow(
       /student_order/,
     );
+  });
+});
+
+describe("noticing a newer card version", () => {
+  it("reads the version from the bundle banner", () => {
+    expect(bundleVersion("/* Somtoday Card v0.3.1 */\n(() => {")).toBe("0.3.1");
+    expect(bundleVersion("/* Somtoday Card v0.4.0-beta.1 */")).toBe(
+      "0.4.0-beta.1",
+    );
+  });
+
+  it("returns null for anything that is not the card", () => {
+    expect(bundleVersion("<!doctype html>")).toBeNull();
+    expect(bundleVersion("")).toBeNull();
+  });
+
+  it("finds the card among the dashboard resources", () => {
+    const resources = [
+      { url: "/hacsfiles/other-card/other-card.js?hacstag=1" },
+      {
+        url: "/hacsfiles/ha-somtoday-card/somtoday-card.js?hacstag=123030",
+      },
+    ];
+    expect(cardResourceUrl(resources)).toBe(
+      "/hacsfiles/ha-somtoday-card/somtoday-card.js?hacstag=123030",
+    );
+    expect(cardResourceUrl([{ url: "/local/somtoday-card.js" }])).toBe(
+      "/local/somtoday-card.js",
+    );
+    expect(
+      cardResourceUrl([{ url: "/local/not-somtoday-card.json" }]),
+    ).toBeNull();
   });
 });

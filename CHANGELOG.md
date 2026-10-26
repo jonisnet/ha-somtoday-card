@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.1
+
+- **An update no longer needs the browser cache cleared.** HACS serves the card
+  with long cache headers and only changes its address on a fresh page load, so
+  an open dashboard — the companion app, a wall tablet — kept running the old
+  card, even after a Home Assistant restart. The card now checks for itself
+  which version the dashboard serves (when it loads, when the app or tab comes
+  back into view, and every fifteen minutes) and reloads the page once when it
+  differs. It never reloads while the dashboard is being edited and never
+  twice for the same version; in those cases it shows a _Reload_ button instead.
+- The version the card reports is now taken from `package.json` at build time,
+  the same place as the file's banner, so the two cannot drift apart.
+
+Note: this takes effect from the next update onwards. Getting from 0.3.0 to
+0.3.1 itself still needs one manual refresh, because 0.3.0 does not have the
+check yet.
+
 ## 0.3.0
 
 - **A Changes view.** Every timetable change of the last fourteen days, newest

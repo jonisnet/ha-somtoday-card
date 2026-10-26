@@ -413,3 +413,21 @@ export function subjectColor(subject, mapping = {}) {
   }
   return `hsl(${Math.abs(hash) % 360} 62% 48%)`;
 }
+
+// Every bundle starts with this banner (see scripts/build.mjs), which makes the
+// version of a served file readable without executing it.
+const BUNDLE_BANNER = /Somtoday Card v(\d+\.\d+\.\d+[^\s*]*)/;
+
+export function bundleVersion(text = "") {
+  return BUNDLE_BANNER.exec(String(text).slice(0, 400))?.[1] || null;
+}
+
+// The dashboard resource that loads this card. HACS appends ?hacstag=… and
+// bumps it on every update; a manually added resource has no query at all.
+export function cardResourceUrl(resources = []) {
+  return (
+    resources.find((resource) =>
+      /\/somtoday-card\.js(\?|$)/.test(String(resource?.url || "")),
+    )?.url || null
+  );
+}
