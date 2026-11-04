@@ -5,8 +5,6 @@
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](https://github.com/jonisnet/ha-somtoday-card/blob/main/LICENSE)
 [![HA](https://img.shields.io/badge/Home%20Assistant-2025.4%2B-41bdf5?style=flat-square)](https://www.home-assistant.io)
 [![Downloads](https://img.shields.io/github/downloads/jonisnet/ha-somtoday-card/total?style=flat-square&label=downloads)](https://github.com/jonisnet/ha-somtoday-card/releases)
-[![Sponsor](https://img.shields.io/badge/sponsor-ea4aaa?style=flat-square&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/jonisnet)
-[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFDD00?style=flat-square&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/jonisnet)
 
 A responsive Home Assistant Lovelace card for the [`jonisnet/ha-somtoday`](https://github.com/jonisnet/ha-somtoday) integration. It shows a horizontal week timetable, the next school day, homework and the next test. Lessons, homework and tests open in a Home Assistant-native dialog.
 
