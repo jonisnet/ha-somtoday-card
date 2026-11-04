@@ -187,4 +187,4 @@ The build produces the single HACS resource `somtoday-card.js`. Every GitHub rel
 
 ---
 
-*Independent community project, not affiliated with or endorsed by Somtoday or Topicus. Use at your own risk.*
+_Independent community project, not affiliated with or endorsed by Somtoday or Topicus. Use at your own risk._
