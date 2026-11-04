@@ -184,3 +184,7 @@ npm run check
 ```
 
 The build produces the single HACS resource `somtoday-card.js`. Every GitHub release must attach that file as an explicit release asset.
+
+---
+
+_Independent community project, not affiliated with or endorsed by Somtoday or Topicus. Use at your own risk._
