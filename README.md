@@ -1,7 +1,7 @@
 # Somtoday Card
 
 [![Version](https://img.shields.io/github/v/release/jonisnet/ha-somtoday-card?style=flat-square&label=version&color=blue)](https://github.com/jonisnet/ha-somtoday-card/releases/latest)
-[![HACS](https://img.shields.io/badge/HACS-Dashboard-orange?style=flat-square)](https://hacs.xyz)
+[![Marketplace](https://img.shields.io/badge/Marketplace-custom_repository-orange?style=flat-square)](https://www.home-assistant.io/integrations/marketplace/)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](https://github.com/jonisnet/ha-somtoday-card/blob/main/LICENSE)
 [![HA](https://img.shields.io/badge/Home%20Assistant-2025.4%2B-41bdf5?style=flat-square)](https://www.home-assistant.io)
 [![Downloads](https://img.shields.io/github/downloads/jonisnet/ha-somtoday-card/total?style=flat-square&label=downloads)](https://github.com/jonisnet/ha-somtoday-card/releases)
@@ -10,9 +10,15 @@ A responsive Home Assistant Lovelace card for the [`jonisnet/ha-somtoday`](https
 
 ## Installation
 
-1. Add `https://github.com/jonisnet/ha-somtoday-card` to HACS as a **Dashboard** custom repository.
+Home Assistant 2026.11 and newer have HACS built in as the **Marketplace**.
+
+[![Open in the Marketplace](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=jonisnet&repository=ha-somtoday-card&category=plugin)
+
+1. Click the button above, or go to **Settings → Marketplace → Add from link** and enter `https://github.com/jonisnet/ha-somtoday-card` (this needs the Marketplace's GitHub connection).
 2. Install **Somtoday Card** and reload the browser.
 3. Add `custom:somtoday-card` with the visual card editor.
+
+On Home Assistant before 2026.11, add the same address to HACS as a **Dashboard** custom repository instead. An installation from HACS moves to the Marketplace by itself when you update Home Assistant.
 
 No `browser_mod`, card-mod or runtime JavaScript dependency is required.
 
@@ -136,7 +142,7 @@ without breaking the card.
 
 ## Updates
 
-After an update through HACS the card reloads the dashboard by itself, once, as
+After an update through the Marketplace (or HACS) the card reloads the dashboard by itself, once, as
 soon as it notices the new version — when the dashboard loads, when the app or
 tab comes back into view, or within fifteen minutes on a screen that stays open.
 No clearing of the browser cache is needed. While a dashboard is being edited it
@@ -183,4 +189,4 @@ npm ci
 npm run check
 ```
 
-The build produces the single HACS resource `somtoday-card.js`. Every GitHub release must attach that file as an explicit release asset.
+The build produces the single dashboard resource `somtoday-card.js`. Every GitHub release must attach that file as an explicit release asset.
