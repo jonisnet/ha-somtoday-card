@@ -1,10 +1,10 @@
 # Somtoday Card
 
-[![Version](https://img.shields.io/github/v/release/jonisnet/ha-somtoday-card?style=flat-square&label=version&color=blue)](https://github.com/jonisnet/ha-somtoday-card/releases/latest)
+[![Version](https://img.shields.io/github/v/release/jonisnet/ha-somtoday-card?style=flat-square&label=version&color=blue&cacheSeconds=86400)](https://github.com/jonisnet/ha-somtoday-card/releases/latest)
 [![Marketplace](https://img.shields.io/badge/Marketplace-custom_repository-orange?style=flat-square)](https://www.home-assistant.io/integrations/marketplace/)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](https://github.com/jonisnet/ha-somtoday-card/blob/main/LICENSE)
 [![HA](https://img.shields.io/badge/Home%20Assistant-2025.4%2B-41bdf5?style=flat-square)](https://www.home-assistant.io)
-[![Downloads](https://img.shields.io/github/downloads/jonisnet/ha-somtoday-card/total?style=flat-square&label=downloads)](https://github.com/jonisnet/ha-somtoday-card/releases)
+[![Downloads](https://img.shields.io/github/downloads/jonisnet/ha-somtoday-card/total?style=flat-square&label=downloads&cacheSeconds=86400)](https://github.com/jonisnet/ha-somtoday-card/releases)
 
 A responsive Home Assistant Lovelace card for the [`jonisnet/ha-somtoday`](https://github.com/jonisnet/ha-somtoday) integration. It shows a horizontal week timetable, the next school day, homework and the next test. Lessons, homework and tests open in a Home Assistant-native dialog.
 
