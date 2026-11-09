@@ -218,6 +218,22 @@ the integration ships a blueprint:
 It asks which phones to notify and which page to open when the notification is
 tapped, so you can send someone straight to the dashboard this card is on.
 
+### Opening a tab from a link
+
+Add `somtoday_view` (and optionally `somtoday_student`, the Somtoday student
+id) to the address of the page the card is on, and the card opens on that tab:
+
+```text
+/lovelace/school?somtoday_view=grades
+/lovelace/school?somtoday_view=messages&somtoday_student=1234
+```
+
+Any of `day`, `tomorrow`, `week`, `homework`, `assignments`, `tests`,
+`changes`, `grades`, `absences` or `messages` works. The notification blueprint
+`somtoday_meldingen` uses this to open the grades tab for a new grade, the
+messages tab for a message, and so on — per kind of notification you choose
+which tab. After that the tabs work as usual.
+
 ## Required integration data
 
 Views are named here by what the integration calls them internally, because the

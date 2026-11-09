@@ -1,4 +1,4 @@
-/* Somtoday Card v0.4.0-beta.1 */
+/* Somtoday Card v0.4.0-beta.2 */
 (() => {
   // src/helpers.js
   var VIEWS = [
@@ -13,6 +13,15 @@
     "absences",
     "messages"
   ];
+  function parseCardLink(search = "") {
+    const params = new URLSearchParams(search);
+    const view = params.get("somtoday_view");
+    const student = params.get("somtoday_student");
+    return {
+      view: VIEWS.includes(view) ? view : null,
+      studentId: student !== null && student !== "" && Number.isFinite(Number(student)) ? Number(student) : null
+    };
+  }
   function validateConfig(config) {
     if (!config || typeof config !== "object")
       throw new Error("Configuration is required");
@@ -774,7 +783,7 @@
   };
 
   // src/somtoday-card.js
-  var VERSION = true ? "0.4.0-beta.1" : "dev";
+  var VERSION = true ? "0.4.0-beta.2" : "dev";
   var DAY_VIEWS = ["day", "tomorrow", "changes"];
   var ALL_STUDENTS = -1;
   var getLit = () => {
@@ -1341,6 +1350,7 @@
       this._hass = value;
       if (value) checkForNewerCard(value);
       if (value) this._maybeFetchRecords();
+      if (value && this.isConnected) this._applyLink();
       if (relevant !== this._lastRelevant) {
         this._lastRelevant = relevant;
         this.requestUpdate();
@@ -1353,6 +1363,10 @@
       super.connectedCallback();
       updateState.cards.add(this);
       recordsState.cards.add(this);
+      this._onLocation = () => this._applyLink();
+      window.addEventListener("location-changed", this._onLocation);
+      window.addEventListener("popstate", this._onLocation);
+      this._applyLink();
       this._recordsTimer = window.setInterval(() => this._maybeFetchRecords(), 60 * 1e3);
       this._maybeFetchRecords();
       this._observer = new ResizeObserver(([entry]) => {
@@ -1368,8 +1382,28 @@
       updateState.cards.delete(this);
       recordsState.cards.delete(this);
       window.clearInterval(this._recordsTimer);
+      window.removeEventListener("location-changed", this._onLocation);
+      window.removeEventListener("popstate", this._onLocation);
       this._observer?.disconnect();
       super.disconnectedCallback();
+    }
+    // Follow ?somtoday_view= / ?somtoday_student= once per address, so tapping a
+    // notification opens the right tab while the tabs stay free to click after.
+    _applyLink() {
+      if (!this._config) return;
+      const search = window.location.search;
+      if (search === this._appliedLink) return;
+      const link = parseCardLink(search);
+      if (link.studentId !== null && !this._hass) return;
+      this._appliedLink = search;
+      if (link.view) this._view = link.view;
+      if (link.studentId !== null) {
+        const index = this._students().findIndex(
+          (student) => studentMatch(this._hass, student).studentId === link.studentId
+        );
+        if (index >= 0) this._studentIndex = index;
+      }
+      if (link.view || link.studentId !== null) this.requestUpdate();
     }
     _locale() {
       return this._hass?.locale?.language?.startsWith("nl") ? "nl" : "en";

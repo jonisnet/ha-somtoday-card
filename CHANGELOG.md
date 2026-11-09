@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0-beta.2
+
+### Added
+
+- **Open a tab from a link.** `?somtoday_view=grades` (and optionally
+  `&somtoday_student=<id>`) in the page address opens the card on that tab and
+  child, so a notification leads straight to the new grade or message.
+
 ## 0.4.0-beta.1
 
 Needs Somtoday 0.2.0-beta.1 or newer for the new parts; with an older integration the card

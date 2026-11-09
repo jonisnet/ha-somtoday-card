@@ -37,6 +37,7 @@ import {
   sortMessages,
   STUDENT_ENTITY_KEYS,
   studentMatch,
+  parseCardLink,
 } from "./helpers.js";
 import { TRANSLATIONS } from "./translations.js";
 
@@ -675,6 +676,7 @@ class SomtodayCard extends LitElement {
     this._hass = value;
     if (value) checkForNewerCard(value);
     if (value) this._maybeFetchRecords();
+    if (value && this.isConnected) this._applyLink();
     if (relevant !== this._lastRelevant) {
       this._lastRelevant = relevant;
       this.requestUpdate();
@@ -688,6 +690,10 @@ class SomtodayCard extends LitElement {
     super.connectedCallback();
     updateState.cards.add(this);
     recordsState.cards.add(this);
+    this._onLocation = () => this._applyLink();
+    window.addEventListener("location-changed", this._onLocation);
+    window.addEventListener("popstate", this._onLocation);
+    this._applyLink();
     // A quiet dashboard may not get a new hass object for a while.
     this._recordsTimer = window.setInterval(() => this._maybeFetchRecords(), 60 * 1000);
     this._maybeFetchRecords();
@@ -704,8 +710,29 @@ class SomtodayCard extends LitElement {
     updateState.cards.delete(this);
     recordsState.cards.delete(this);
     window.clearInterval(this._recordsTimer);
+    window.removeEventListener("location-changed", this._onLocation);
+    window.removeEventListener("popstate", this._onLocation);
     this._observer?.disconnect();
     super.disconnectedCallback();
+  }
+
+  // Follow ?somtoday_view= / ?somtoday_student= once per address, so tapping a
+  // notification opens the right tab while the tabs stay free to click after.
+  _applyLink() {
+    if (!this._config) return;
+    const search = window.location.search;
+    if (search === this._appliedLink) return;
+    const link = parseCardLink(search);
+    if (link.studentId !== null && !this._hass) return;
+    this._appliedLink = search;
+    if (link.view) this._view = link.view;
+    if (link.studentId !== null) {
+      const index = this._students().findIndex(
+        (student) => studentMatch(this._hass, student).studentId === link.studentId,
+      );
+      if (index >= 0) this._studentIndex = index;
+    }
+    if (link.view || link.studentId !== null) this.requestUpdate();
   }
 
   _locale() {

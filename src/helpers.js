@@ -11,6 +11,22 @@ export const VIEWS = [
   "messages",
 ];
 
+// A link such as /lovelace/school?somtoday_view=grades&somtoday_student=1234
+// opens the card on that tab and child, so a notification can lead straight to
+// what it is about. Unknown values are ignored.
+export function parseCardLink(search = "") {
+  const params = new URLSearchParams(search);
+  const view = params.get("somtoday_view");
+  const student = params.get("somtoday_student");
+  return {
+    view: VIEWS.includes(view) ? view : null,
+    studentId:
+      student !== null && student !== "" && Number.isFinite(Number(student))
+        ? Number(student)
+        : null,
+  };
+}
+
 export function validateConfig(config) {
   if (!config || typeof config !== "object")
     throw new Error("Configuration is required");

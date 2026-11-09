@@ -13,6 +13,7 @@ import {
   lessonDeviation,
   normalizeWeekDays,
   orderStudents,
+  parseCardLink,
   sortHomework,
   STUDENT_ENTITY_KEYS,
   subjectColor,
@@ -494,5 +495,27 @@ describe("workKind", () => {
   it("never shows an unknown type as a test", () => {
     expect(workKind("unknown")).toBe("other");
     expect(workKind(undefined)).toBe("other");
+  });
+});
+
+describe("parseCardLink", () => {
+  it("reads the tab and child from the address", () => {
+    expect(
+      parseCardLink("?somtoday_view=grades&somtoday_student=1234"),
+    ).toEqual({
+      view: "grades",
+      studentId: 1234,
+    });
+  });
+  it("ignores unknown tabs and missing values", () => {
+    expect(parseCardLink("?somtoday_view=secrets")).toEqual({
+      view: null,
+      studentId: null,
+    });
+    expect(parseCardLink("")).toEqual({ view: null, studentId: null });
+    expect(parseCardLink("?edit=1&somtoday_view=messages")).toEqual({
+      view: "messages",
+      studentId: null,
+    });
   });
 });
