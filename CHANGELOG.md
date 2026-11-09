@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.0-beta.3
+
+Grade levels need Somtoday 0.2.0-beta.2 or newer.
+
+### Added
+
+- **Both levels of a dual-level class.** For classes graded on two levels
+  (vmbo BB/KB) every grade and average shows both figures. `grade_level`
+  (card-wide, or per child under `students`) picks which one is big:
+  `both_main_first` (default), `both_alt_first`, `main` or `alt`.
+
+### Fixed
+
+- **A block without a subject is named.** A mentor or project block (for
+  example "STARR") showed "—"; it now shows its own title.
+- **A block over several periods is one row.** A lesson without period numbers
+  that runs 13:00–14:30 now fills periods 6–7 instead of leaving period 7
+  marked as free.
+
 ## 0.4.0-beta.2
 
 ### Added

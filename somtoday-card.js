@@ -1,4 +1,4 @@
-/* Somtoday Card v0.4.0-beta.2 */
+/* Somtoday Card v0.4.0-beta.3 */
 (() => {
   // src/helpers.js
   var VIEWS = [
@@ -39,6 +39,13 @@
     }
     if (config.student_order && !STUDENT_ORDERS.includes(config.student_order)) {
       throw new Error(`Unknown student_order: ${config.student_order}`);
+    }
+    for (const level of [
+      config.grade_level,
+      ...(config.students || []).map((s) => s?.grade_level)
+    ]) {
+      if (level && !GRADE_LEVELS.includes(level))
+        throw new Error(`Unknown grade_level: ${level}`);
     }
     return true;
   }
@@ -202,25 +209,46 @@
     [9, "15:30", "16:15"],
     [10, "16:15", "17:00"]
   ];
+  function lessonName(lesson = {}) {
+    return lesson.subject || lesson.subject_short || lesson.title || "\u2014";
+  }
+  function clock(value) {
+    return String(value || "").slice(11, 16);
+  }
+  function lessonCovers(item, period, startTime, endTime) {
+    const first = Number(item.period_start ?? item.period);
+    if (first)
+      return first <= period && Number(item.period_end ?? first) >= period || clock(item.start) === startTime;
+    const start = clock(item.start);
+    const end = clock(item.end);
+    return Boolean(start) && start < endTime && (end ? end > startTime : start === startTime);
+  }
   function buildSchoolDayTimeline(date, lessons = [], appointments = []) {
     const sample = lessons.find((lesson) => lesson.start)?.start || "";
     const offset = String(sample).match(/(Z|[+-]\d\d:\d\d)$/)?.[1] || "";
     const timeline = [];
+    let previous = null;
     LESSON_PERIOD_SLOTS.forEach(([period, startTime, endTime], index) => {
-      const lesson = lessons.find((item) => {
-        const first = Number(item.period_start ?? item.period);
-        const last = Number(item.period_end ?? first);
-        return first && first <= period && last >= period || String(item.start || "").slice(11, 16) === startTime;
-      });
+      const lesson = lessons.find(
+        (item) => lessonCovers(item, period, startTime, endTime)
+      );
       const start = `${date}T${startTime}:00${offset}`;
       const end = `${date}T${endTime}:00${offset}`;
-      timeline.push({
-        type: lesson ? "lesson" : "empty_lesson",
-        start,
-        end,
-        period,
-        item: lesson
-      });
+      if (lesson && previous?.item === lesson) {
+        timeline.splice(timeline.indexOf(previous) + 1);
+        previous.end = end;
+        previous.period_end = period;
+      } else {
+        previous = {
+          type: lesson ? "lesson" : "empty_lesson",
+          start,
+          end,
+          period,
+          period_end: period,
+          item: lesson
+        };
+        timeline.push(previous);
+      }
       const next = LESSON_PERIOD_SLOTS[index + 1];
       if (next && next[1] !== endTime) {
         timeline.push(...splitSchoolGap(end, `${date}T${next[1]}:00${offset}`));
@@ -535,6 +563,32 @@
     });
     return result?.response ?? null;
   }
+  var GRADE_LEVELS = [
+    "both_main_first",
+    "both_alt_first",
+    "main",
+    "alt"
+  ];
+  function gradeLevels(item = {}, level = "both_main_first") {
+    const main = {
+      level: item.level || null,
+      result: item.result,
+      value: item.value,
+      sufficient: item.sufficient
+    };
+    const hasAlt = (item.alt_result ?? null) !== null || (item.alt_value ?? null) !== null;
+    if (!hasAlt) return { primary: main, secondary: null };
+    const alt = {
+      level: item.alt_level || null,
+      result: item.alt_result,
+      value: item.alt_value,
+      sufficient: item.alt_sufficient
+    };
+    if (level === "main") return { primary: main, secondary: null };
+    if (level === "alt") return { primary: alt, secondary: null };
+    if (level === "both_alt_first") return { primary: alt, secondary: main };
+    return { primary: main, secondary: alt };
+  }
 
   // src/translations.js
   var TRANSLATIONS = {
@@ -654,6 +708,11 @@
       editor_show_assignments: "Assignments",
       editor_show_grades: "Grades",
       editor_show_averages: "Averages",
+      editor_grade_level: "Grade level (dual-level classes, e.g. BB/KB)",
+      grade_level_both_main_first: "Both, first level on top",
+      grade_level_both_alt_first: "Both, second level on top (e.g. KB)",
+      grade_level_main: "Only the first level",
+      grade_level_alt: "Only the second level (e.g. KB)",
       editor_show_absences: "Absences",
       editor_show_measures: "Measures",
       editor_show_messages: "Messages",
@@ -775,6 +834,11 @@
       editor_show_assignments: "Inleveropdrachten",
       editor_show_grades: "Cijfers",
       editor_show_averages: "Gemiddelden",
+      editor_grade_level: "Cijferniveau (klassen met twee niveaus, bijv. BB/KB)",
+      grade_level_both_main_first: "Beide, eerste niveau groot",
+      grade_level_both_alt_first: "Beide, tweede niveau groot (bijv. KB)",
+      grade_level_main: "Alleen het eerste niveau",
+      grade_level_alt: "Alleen het tweede niveau (bijv. KB)",
       editor_show_absences: "Afwezigheid",
       editor_show_measures: "Maatregelen",
       editor_show_messages: "Berichten",
@@ -783,7 +847,7 @@
   };
 
   // src/somtoday-card.js
-  var VERSION = true ? "0.4.0-beta.2" : "dev";
+  var VERSION = true ? "0.4.0-beta.3" : "dev";
   var DAY_VIEWS = ["day", "tomorrow", "changes"];
   var ALL_STUDENTS = -1;
   var getLit = () => {
@@ -1261,7 +1325,10 @@
     .section-title { margin: 14px 2px 8px; font-size: 0.95rem; font-weight: 600; }
     .section-title:first-child { margin-top: 0; }
     .record { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 4px 12px; padding: 8px 10px; border-radius: 9px; border-left: 4px solid var(--subject-color, var(--primary-color)); background: color-mix(in srgb, var(--subject-color, var(--primary-color)) 8%, var(--card-background-color)); }
-    .record .result { min-width: 2.6em; text-align: center; font-size: 1.15rem; font-weight: 700; }
+    .record .result { min-width: 2.6em; text-align: center; font-size: 1.15rem; font-weight: 700; display: flex; flex-direction: column; align-items: center; line-height: 1.15; }
+    .grade-main .level { font-size: 0.62rem; font-weight: 700; margin-right: 3px; opacity: .75; vertical-align: middle; }
+    .grade-other { display: block; font-size: 0.68rem; font-weight: 600; color: var(--secondary-text-color); }
+    .averages .grade-other { display: inline; margin-left: 6px; }
     .insufficient { color: var(--error-color); }
     .record .what { min-width: 0; }
     .record .what > div:first-child { font-weight: 600; overflow-wrap: anywhere; }
@@ -1657,7 +1724,7 @@
               ${grades.map((grade) => {
         const color = subjectColor(grade.subject || grade.subject_short, this._colors());
         return html`<div class="record" style=${color ? `--subject-color:${color}` : ""}>
-                  <span class="result ${grade.sufficient === false ? "insufficient" : ""}">${formatGrade(grade.result, grade.value, locale)}</span>
+                  <span class="result">${this._gradeCell(grade, locale, student)}</span>
                   <div class="what">
                     <div>${grade.subject || grade.subject_short || "\u2014"}</div>
                     <div class="meta">
@@ -1678,7 +1745,7 @@
               ${averages.map(
         (average) => html`<tr>
                   <td>${average.subject || average.subject_short || "\u2014"}</td>
-                  <td class=${average.sufficient === false ? "insufficient" : ""}>${formatGrade(average.result, average.value, locale)}</td>
+                  <td>${this._gradeCell(average, locale, student)}</td>
                 </tr>`
       )}
             </table>` : ""}
@@ -1796,7 +1863,7 @@
       const workItems = workState?.attributes?.items || [];
       const cells = LESSON_PERIOD_SLOTS.map(([period, start, end]) => `<tr><th>${period}<small>${start}\u2013${end}</small></th>${days.map((day) => {
         const lesson = (day.lessons || []).find((item) => Number(item.period_start ?? item.period) === period || String(item.start || "").slice(11, 16) === start);
-        return lesson ? `<td class="${lesson.cancelled ? "cancelled" : ""}"><strong>${escapeHtml(lesson.subject || lesson.subject_short || "")}</strong><small>${escapeHtml(lesson.teacher || "")}${lesson.location ? ` \xB7 ${escapeHtml(lesson.location)}` : ""}</small></td>` : "<td class=empty>Geen les</td>";
+        return lesson ? `<td class="${lesson.cancelled ? "cancelled" : ""}"><strong>${escapeHtml(lessonName(lesson))}</strong><small>${escapeHtml(lesson.teacher || "")}${lesson.location ? ` \xB7 ${escapeHtml(lesson.location)}` : ""}</small></td>` : "<td class=empty>Geen les</td>";
       }).join("")}</tr>`).join("");
       popup.document.write(`<!doctype html><html><head><title>${escapeHtml(this._config.title)} \u2013 ${escapeHtml(this._weekLabel())}</title><style>@page{size:landscape;margin:12mm}body{font:12px Arial;color:#111}h1{margin:0 0 4px}p{margin:0 0 14px;color:#555}table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{border:1px solid #999;padding:6px;vertical-align:top}thead th{background:#e8eef5}tbody th{width:70px;background:#f3f3f3}small{display:block;margin-top:3px;color:#555}.empty{color:#999;background:#fafafa}.cancelled{text-decoration:line-through;background:#ffe8e8}</style></head><body><h1>${escapeHtml(this._config.title)}</h1><p>${escapeHtml(student.name || "")} \xB7 ${escapeHtml(this._weekLabel())}</p><table><thead><tr><th>Uur</th>${days.map((day) => `<th>${escapeHtml(formatDate(day.date, this._locale()))}</th>`).join("")}</tr></thead><tbody>${cells}</tbody></table><script>window.onload=()=>{window.print()}<\/script></body></html>`);
       LESSON_PERIOD_SLOTS.forEach(([period, start], rowIndex) => {
@@ -1884,7 +1951,7 @@
         ><span class="count">${lessons.length}</span>
       </div>
       ${planner ? this._edgeButton(this._t("before_school"), date, lessons[0]?.start, true, planner) : ""}
-      ${timeline.map((entry) => entry.type === "lesson" ? this._lessonButton(entry.item, currentState, student) : entry.type === "empty_lesson" ? this._emptyLessonButton(entry, planner) : entry.type === "appointment" ? this._appointmentButton(entry.item, planner) : this._gapButton(entry, planner))}
+      ${timeline.map((entry) => entry.type === "lesson" ? this._lessonButton(entry.item, currentState, student, entry) : entry.type === "empty_lesson" ? this._emptyLessonButton(entry, planner) : entry.type === "appointment" ? this._appointmentButton(entry.item, planner) : this._gapButton(entry, planner))}
       ${missing.map((lesson) => this._lessonButton({ ...lesson, _missing: true }))}
       ${planner ? this._edgeButton(this._t("after_school"), date, lessons.at(-1)?.end, false, planner) : ""}
     </section>`;
@@ -1934,7 +2001,7 @@
     _notify(message) {
       this.dispatchEvent(new CustomEvent("hass-notification", { detail: { message }, bubbles: true, composed: true }));
     }
-    _lessonButton(lesson, currentState, student = this._student()) {
+    _lessonButton(lesson, currentState, student = this._student(), entry = null) {
       const deviation = lesson._missing ? "missing" : lessonDeviation(lesson);
       const current = currentState?.attributes?.start && currentState.attributes.start === lesson.start;
       const color = subjectColor(
@@ -1960,12 +2027,12 @@
       @click=${() => this._dialog = { type: "lesson", item: lesson, deviation }}
     >
       <span class="lesson-head"
-        ><span>${lesson.subject || lesson.subject_short || "\u2014"}</span
+        ><span>${lessonName(lesson)}</span
         >${deviation ? html`<span class="badge">${this._t(deviation)}</span>` : ""}</span
       >
       <span class="meta"
         ><span
-          >${lesson.period || lesson.period_start ? `${this._t("period")} ${lesson.period || lesson.period_start}` : ""}</span
+          >${this._periodLabel(lesson, entry)}</span
         ><span
           >${lesson.start ? `${formatTime(lesson.start, this._locale())}\u2013${formatTime(lesson.end, this._locale())}` : `${lesson.start_time || ""}\u2013${lesson.end_time || ""}`}</span
         ><span>${lesson.location || ""}</span><span>${lesson.teacher || ""}</span></span
@@ -1975,6 +2042,23 @@
         this._dialog = { type: workKind(item.type), item };
       }}>${this._t(workKind(item.type))}</span>`)}</span>` : ""}
     </button>`;
+    }
+    _periodLabel(lesson, entry) {
+      const first = Number(lesson.period || lesson.period_start) || entry?.period || null;
+      if (!first) return "";
+      const last = Number(lesson.period_end) || entry?.period_end || first;
+      return `${this._t("period")} ${last > first ? `${first}\u2013${last}` : first}`;
+    }
+    _gradeLevel(student = this._student()) {
+      return student?.grade_level || this._config.grade_level || "both_main_first";
+    }
+    _gradeCell(item, locale, student) {
+      const { primary, secondary } = gradeLevels(item, this._gradeLevel(student));
+      return html`<span class="grade-main ${primary.sufficient === false ? "insufficient" : ""}"
+        >${primary.level && secondary ? html`<small class="level">${primary.level}</small>` : ""}${formatGrade(primary.result, primary.value, locale)}</span
+      >${secondary ? html`<small class="grade-other ${secondary.sufficient === false ? "insufficient" : ""}"
+            >${secondary.level ? `${secondary.level} ` : ""}${formatGrade(secondary.result, secondary.value, locale)}</small
+          >` : ""}`;
     }
     _renderHomework(student) {
       const state = this._state(student.homework_entity);
@@ -2014,7 +2098,7 @@
       const color = subjectColor(change.subject || change.subject_short, this._colors());
       return html`<div class="item change ${change.type}" style=${color ? `--subject-color:${color}` : ""}>
       <span class="item-head"
-        ><span>${change.subject || change.subject_short || "\u2014"}</span
+        ><span>${lessonName(change)}</span
         ><span class="badge">${this._t(`change_${change.type}`)}</span></span
       >
       <div class="meta">
@@ -2235,6 +2319,12 @@
         .value=${this._config.default_view || "week"}
         @selected=${(event) => this._set("default_view", event.target.value)}
         >${VIEWS.map((view) => html`<mwc-list-item .value=${view}>${view}</mwc-list-item>`)}</ha-select
+      ><ha-select
+        .label=${strings.editor_grade_level}
+        .value=${this._config.grade_level || "both_main_first"}
+        @selected=${(event) => this._set("grade_level", event.target.value)}
+        @closed=${(event) => event.stopPropagation()}
+        >${GRADE_LEVELS.map((level) => html`<mwc-list-item .value=${level}>${strings[`grade_level_${level}`]}</mwc-list-item>`)}</ha-select
       >${several ? html`<ha-formfield label="Show all children side by side on Today and Tomorrow">
               <ha-switch
                 .checked=${this._config.show_all_students === true}

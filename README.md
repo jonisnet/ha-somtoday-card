@@ -111,16 +111,17 @@ subject_colors:
 
 ### Options
 
-| Option              | Description                                                                                                  |
-| ------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `title`             | Card heading                                                                                                 |
-| `default_view`      | `day`, `tomorrow`, `week`, `homework`, `assignments`, `tests`, `changes`, `grades`, `absences` or `messages` |
-| `show_view_tabs`    | Show the in-card view switcher                                                                               |
-| `name`              | Pupil name in the heading, for a single child                                                                |
-| `students`          | One entry per child, when there is more than one                                                             |
-| `student_order`     | `manual` (default, the list order) or `name`                                                                 |
-| `show_all_students` | Offer "All children" on Today, Tomorrow and Changes                                                          |
-| `subject_colors`    | Subject name to CSS color mapping                                                                            |
+| Option              | Description                                                                                                    |
+| ------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `title`             | Card heading                                                                                                   |
+| `default_view`      | `day`, `tomorrow`, `week`, `homework`, `assignments`, `tests`, `changes`, `grades`, `absences` or `messages`   |
+| `show_view_tabs`    | Show the in-card view switcher                                                                                 |
+| `name`              | Pupil name in the heading, for a single child                                                                  |
+| `students`          | One entry per child, when there is more than one                                                               |
+| `student_order`     | `manual` (default, the list order) or `name`                                                                   |
+| `show_all_students` | Offer "All children" on Today, Tomorrow and Changes                                                            |
+| `subject_colors`    | Subject name to CSS color mapping                                                                              |
+| `grade_level`       | Two-level classes (vmbo BB/KB): `both_main_first` (default), `both_alt_first`, `main` or `alt`; also per child |
 
 Each section has its own switch in the editor. All of them are on by default;
 set one to `false` to hide it:

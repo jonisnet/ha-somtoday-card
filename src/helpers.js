@@ -45,6 +45,13 @@ export function validateConfig(config) {
   if (config.student_order && !STUDENT_ORDERS.includes(config.student_order)) {
     throw new Error(`Unknown student_order: ${config.student_order}`);
   }
+  for (const level of [
+    config.grade_level,
+    ...(config.students || []).map((s) => s?.grade_level),
+  ]) {
+    if (level && !GRADE_LEVELS.includes(level))
+      throw new Error(`Unknown grade_level: ${level}`);
+  }
   return true;
 }
 
@@ -308,28 +315,59 @@ export const LESSON_PERIOD_SLOTS = [
   [10, "16:15", "17:00"],
 ];
 
+/** The name to show for a lesson: its subject, or the block's own title. */
+export function lessonName(lesson = {}) {
+  return lesson.subject || lesson.subject_short || lesson.title || "—";
+}
+
+function clock(value) {
+  return String(value || "").slice(11, 16);
+}
+
+function lessonCovers(item, period, startTime, endTime) {
+  const first = Number(item.period_start ?? item.period);
+  if (first)
+    return (
+      (first <= period && Number(item.period_end ?? first) >= period) ||
+      clock(item.start) === startTime
+    );
+  // No period number (a mentor block, "STARR"): place it by its times.
+  const start = clock(item.start);
+  const end = clock(item.end);
+  return (
+    Boolean(start) &&
+    start < endTime &&
+    (end ? end > startTime : start === startTime)
+  );
+}
+
 export function buildSchoolDayTimeline(date, lessons = [], appointments = []) {
   const sample = lessons.find((lesson) => lesson.start)?.start || "";
   const offset = String(sample).match(/(Z|[+-]\d\d:\d\d)$/)?.[1] || "";
   const timeline = [];
+  let previous = null;
   LESSON_PERIOD_SLOTS.forEach(([period, startTime, endTime], index) => {
-    const lesson = lessons.find((item) => {
-      const first = Number(item.period_start ?? item.period);
-      const last = Number(item.period_end ?? first);
-      return (
-        (first && first <= period && last >= period) ||
-        String(item.start || "").slice(11, 16) === startTime
-      );
-    });
+    const lesson = lessons.find((item) =>
+      lessonCovers(item, period, startTime, endTime),
+    );
     const start = `${date}T${startTime}:00${offset}`;
     const end = `${date}T${endTime}:00${offset}`;
-    timeline.push({
-      type: lesson ? "lesson" : "empty_lesson",
-      start,
-      end,
-      period,
-      item: lesson,
-    });
+    if (lesson && previous?.item === lesson) {
+      // One lesson over several periods is one row, not a row per period.
+      timeline.splice(timeline.indexOf(previous) + 1);
+      previous.end = end;
+      previous.period_end = period;
+    } else {
+      previous = {
+        type: lesson ? "lesson" : "empty_lesson",
+        start,
+        end,
+        period,
+        period_end: period,
+        item: lesson,
+      };
+      timeline.push(previous);
+    }
     const next = LESSON_PERIOD_SLOTS[index + 1];
     if (next && next[1] !== endTime) {
       timeline.push(...splitSchoolGap(end, `${date}T${next[1]}:00${offset}`));
@@ -801,4 +839,37 @@ export async function fetchRecords(hass) {
     return_response: true,
   });
   return result?.response ?? null;
+}
+
+export const GRADE_LEVELS = [
+  "both_main_first",
+  "both_alt_first",
+  "main",
+  "alt",
+];
+
+/**
+ * Split a grade or average into the figure to show big and the one beside it.
+ * A dual-level class (vmbo BB/KB) has a main and an "alternative" result.
+ */
+export function gradeLevels(item = {}, level = "both_main_first") {
+  const main = {
+    level: item.level || null,
+    result: item.result,
+    value: item.value,
+    sufficient: item.sufficient,
+  };
+  const hasAlt =
+    (item.alt_result ?? null) !== null || (item.alt_value ?? null) !== null;
+  if (!hasAlt) return { primary: main, secondary: null };
+  const alt = {
+    level: item.alt_level || null,
+    result: item.alt_result,
+    value: item.alt_value,
+    sufficient: item.alt_sufficient,
+  };
+  if (level === "main") return { primary: main, secondary: null };
+  if (level === "alt") return { primary: alt, secondary: null };
+  if (level === "both_alt_first") return { primary: alt, secondary: main };
+  return { primary: main, secondary: alt };
 }

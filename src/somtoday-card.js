@@ -1,7 +1,10 @@
 /* eslint-disable no-useless-escape -- print HTML must escape its closing script tag */
 import {
   VIEWS,
+  GRADE_LEVELS,
   buildSchoolDayTimeline,
+  gradeLevels,
+  lessonName,
   LESSON_PERIOD_SLOTS,
   buildStubConfig,
   bundleVersion,
@@ -573,7 +576,10 @@ class SomtodayCard extends LitElement {
     .section-title { margin: 14px 2px 8px; font-size: 0.95rem; font-weight: 600; }
     .section-title:first-child { margin-top: 0; }
     .record { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 4px 12px; padding: 8px 10px; border-radius: 9px; border-left: 4px solid var(--subject-color, var(--primary-color)); background: color-mix(in srgb, var(--subject-color, var(--primary-color)) 8%, var(--card-background-color)); }
-    .record .result { min-width: 2.6em; text-align: center; font-size: 1.15rem; font-weight: 700; }
+    .record .result { min-width: 2.6em; text-align: center; font-size: 1.15rem; font-weight: 700; display: flex; flex-direction: column; align-items: center; line-height: 1.15; }
+    .grade-main .level { font-size: 0.62rem; font-weight: 700; margin-right: 3px; opacity: .75; vertical-align: middle; }
+    .grade-other { display: block; font-size: 0.68rem; font-weight: 600; color: var(--secondary-text-color); }
+    .averages .grade-other { display: inline; margin-left: 6px; }
     .insufficient { color: var(--error-color); }
     .record .what { min-width: 0; }
     .record .what > div:first-child { font-weight: 600; overflow-wrap: anywhere; }
@@ -1022,7 +1028,7 @@ class SomtodayCard extends LitElement {
               ${grades.map((grade) => {
                 const color = subjectColor(grade.subject || grade.subject_short, this._colors());
                 return html`<div class="record" style=${color ? `--subject-color:${color}` : ""}>
-                  <span class="result ${grade.sufficient === false ? "insufficient" : ""}">${formatGrade(grade.result, grade.value, locale)}</span>
+                  <span class="result">${this._gradeCell(grade, locale, student)}</span>
                   <div class="what">
                     <div>${grade.subject || grade.subject_short || "—"}</div>
                     <div class="meta">
@@ -1047,7 +1053,7 @@ class SomtodayCard extends LitElement {
               ${averages.map(
                 (average) => html`<tr>
                   <td>${average.subject || average.subject_short || "—"}</td>
-                  <td class=${average.sufficient === false ? "insufficient" : ""}>${formatGrade(average.result, average.value, locale)}</td>
+                  <td>${this._gradeCell(average, locale, student)}</td>
                 </tr>`,
               )}
             </table>`
@@ -1178,7 +1184,7 @@ class SomtodayCard extends LitElement {
     if (!popup) { this._notify(this._t("popup_blocked")); return; }
     const workState = this._state(student.upcoming_work_entity) || this._relatedState(student, (state) => Array.isArray(state.attributes?.items) && !state.attributes?.config_entry_id);
     const workItems = workState?.attributes?.items || [];
-    const cells = LESSON_PERIOD_SLOTS.map(([period, start, end]) => `<tr><th>${period}<small>${start}–${end}</small></th>${days.map((day) => { const lesson = (day.lessons || []).find((item) => Number(item.period_start ?? item.period) === period || String(item.start || "").slice(11, 16) === start); return lesson ? `<td class="${lesson.cancelled ? "cancelled" : ""}"><strong>${escapeHtml(lesson.subject || lesson.subject_short || "")}</strong><small>${escapeHtml(lesson.teacher || "")}${lesson.location ? ` · ${escapeHtml(lesson.location)}` : ""}</small></td>` : "<td class=empty>Geen les</td>"; }).join("")}</tr>`).join("");
+    const cells = LESSON_PERIOD_SLOTS.map(([period, start, end]) => `<tr><th>${period}<small>${start}–${end}</small></th>${days.map((day) => { const lesson = (day.lessons || []).find((item) => Number(item.period_start ?? item.period) === period || String(item.start || "").slice(11, 16) === start); return lesson ? `<td class="${lesson.cancelled ? "cancelled" : ""}"><strong>${escapeHtml(lessonName(lesson))}</strong><small>${escapeHtml(lesson.teacher || "")}${lesson.location ? ` · ${escapeHtml(lesson.location)}` : ""}</small></td>` : "<td class=empty>Geen les</td>"; }).join("")}</tr>`).join("");
     popup.document.write(`<!doctype html><html><head><title>${escapeHtml(this._config.title)} – ${escapeHtml(this._weekLabel())}</title><style>@page{size:landscape;margin:12mm}body{font:12px Arial;color:#111}h1{margin:0 0 4px}p{margin:0 0 14px;color:#555}table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{border:1px solid #999;padding:6px;vertical-align:top}thead th{background:#e8eef5}tbody th{width:70px;background:#f3f3f3}small{display:block;margin-top:3px;color:#555}.empty{color:#999;background:#fafafa}.cancelled{text-decoration:line-through;background:#ffe8e8}</style></head><body><h1>${escapeHtml(this._config.title)}</h1><p>${escapeHtml(student.name || "")} · ${escapeHtml(this._weekLabel())}</p><table><thead><tr><th>Uur</th>${days.map((day) => `<th>${escapeHtml(formatDate(day.date, this._locale()))}</th>`).join("")}</tr></thead><tbody>${cells}</tbody></table><script>window.onload=()=>{window.print()}<\/script></body></html>`);
     LESSON_PERIOD_SLOTS.forEach(([period, start], rowIndex) => {
       days.forEach((day, dayIndex) => {
@@ -1269,7 +1275,7 @@ class SomtodayCard extends LitElement {
         ><span class="count">${lessons.length}</span>
       </div>
       ${planner ? this._edgeButton(this._t("before_school"), date, lessons[0]?.start, true, planner) : ""}
-      ${timeline.map((entry) => entry.type === "lesson" ? this._lessonButton(entry.item, currentState, student) : entry.type === "empty_lesson" ? this._emptyLessonButton(entry, planner) : entry.type === "appointment" ? this._appointmentButton(entry.item, planner) : this._gapButton(entry, planner))}
+      ${timeline.map((entry) => entry.type === "lesson" ? this._lessonButton(entry.item, currentState, student, entry) : entry.type === "empty_lesson" ? this._emptyLessonButton(entry, planner) : entry.type === "appointment" ? this._appointmentButton(entry.item, planner) : this._gapButton(entry, planner))}
       ${missing.map((lesson) => this._lessonButton({ ...lesson, _missing: true }))}
       ${planner ? this._edgeButton(this._t("after_school"), date, lessons.at(-1)?.end, false, planner) : ""}
     </section>`;
@@ -1323,7 +1329,7 @@ class SomtodayCard extends LitElement {
 
   _notify(message) { this.dispatchEvent(new CustomEvent("hass-notification", { detail: { message }, bubbles: true, composed: true })); }
 
-  _lessonButton(lesson, currentState, student = this._student()) {
+  _lessonButton(lesson, currentState, student = this._student(), entry = null) {
     const deviation = lesson._missing ? "missing" : lessonDeviation(lesson);
     const current =
       currentState?.attributes?.start &&
@@ -1351,18 +1357,40 @@ class SomtodayCard extends LitElement {
       @click=${() => (this._dialog = { type: "lesson", item: lesson, deviation })}
     >
       <span class="lesson-head"
-        ><span>${lesson.subject || lesson.subject_short || "—"}</span
+        ><span>${lessonName(lesson)}</span
         >${deviation ? html`<span class="badge">${this._t(deviation)}</span>` : ""}</span
       >
       <span class="meta"
         ><span
-          >${lesson.period || lesson.period_start ? `${this._t("period")} ${lesson.period || lesson.period_start}` : ""}</span
+          >${this._periodLabel(lesson, entry)}</span
         ><span
           >${lesson.start ? `${formatTime(lesson.start, this._locale())}–${formatTime(lesson.end, this._locale())}` : `${lesson.start_time || ""}–${lesson.end_time || ""}`}</span
         ><span>${lesson.location || ""}</span><span>${lesson.teacher || ""}</span></span
       >
       ${work.length ? html`<span class="work-chips">${work.map((item) => html`<span role="button" class="work-chip ${workKind(item.type)}" @click=${(event) => { event.stopPropagation(); this._dialog = { type: workKind(item.type), item }; }}>${this._t(workKind(item.type))}</span>`)}</span>` : ""}
     </button>`;
+  }
+
+  _periodLabel(lesson, entry) {
+    const first = Number(lesson.period || lesson.period_start) || entry?.period || null;
+    if (!first) return "";
+    const last = Number(lesson.period_end) || entry?.period_end || first;
+    return `${this._t("period")} ${last > first ? `${first}–${last}` : first}`;
+  }
+
+  _gradeLevel(student = this._student()) {
+    return student?.grade_level || this._config.grade_level || "both_main_first";
+  }
+
+  _gradeCell(item, locale, student) {
+    const { primary, secondary } = gradeLevels(item, this._gradeLevel(student));
+    return html`<span class="grade-main ${primary.sufficient === false ? "insufficient" : ""}"
+        >${primary.level && secondary ? html`<small class="level">${primary.level}</small>` : ""}${formatGrade(primary.result, primary.value, locale)}</span
+      >${secondary
+        ? html`<small class="grade-other ${secondary.sufficient === false ? "insufficient" : ""}"
+            >${secondary.level ? `${secondary.level} ` : ""}${formatGrade(secondary.result, secondary.value, locale)}</small
+          >`
+        : ""}`;
   }
 
   _renderHomework(student) {
@@ -1417,7 +1445,7 @@ class SomtodayCard extends LitElement {
     const color = subjectColor(change.subject || change.subject_short, this._colors());
     return html`<div class="item change ${change.type}" style=${color ? `--subject-color:${color}` : ""}>
       <span class="item-head"
-        ><span>${change.subject || change.subject_short || "—"}</span
+        ><span>${lessonName(change)}</span
         ><span class="badge">${this._t(`change_${change.type}`)}</span></span
       >
       <div class="meta">
@@ -1654,6 +1682,12 @@ class SomtodayCardEditor extends LitElement {
         .value=${this._config.default_view || "week"}
         @selected=${(event) => this._set("default_view", event.target.value)}
         >${VIEWS.map((view) => html`<mwc-list-item .value=${view}>${view}</mwc-list-item>`)}</ha-select
+      ><ha-select
+        .label=${strings.editor_grade_level}
+        .value=${this._config.grade_level || "both_main_first"}
+        @selected=${(event) => this._set("grade_level", event.target.value)}
+        @closed=${(event) => event.stopPropagation()}
+        >${GRADE_LEVELS.map((level) => html`<mwc-list-item .value=${level}>${strings[`grade_level_${level}`]}</mwc-list-item>`)}</ha-select
       >${several
         ? html`<ha-formfield label="Show all children side by side on Today and Tomorrow">
               <ha-switch
