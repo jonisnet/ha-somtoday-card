@@ -379,6 +379,23 @@ export function workForLesson(lesson, items = []) {
   });
 }
 
+// Somtoday study-guide item type → what the card shows. Only homework and
+// tests used to exist; lesson material (LESSTOF) describes the lesson and is
+// not work to hand in, and anything new must not pose as a test.
+export function workKind(type) {
+  if (type === "homework") return "homework";
+  if (type === "test" || type === "large_test") return "test";
+  if (type === "lesson_material") return "lesson_material";
+  return "other";
+}
+
+export const WORK_KIND_COLORS = {
+  homework: { color: "#176b35", background: "#b9f6ca" },
+  test: { color: "#8a3f00", background: "#ffd5a6" },
+  lesson_material: { color: "#0b4f8a", background: "#cfe5ff" },
+  other: { color: "#444444", background: "#e0e0e0" },
+};
+
 export function sortHomework(items = []) {
   return [...items].sort((a, b) => {
     if (!a?.due) return 1;

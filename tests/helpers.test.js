@@ -18,6 +18,7 @@ import {
   subjectColor,
   validateConfig,
   workForLesson,
+  workKind,
 } from "../src/helpers.js";
 
 describe("lesson-bound schoolwork", () => {
@@ -474,5 +475,20 @@ describe("noticing a newer card version", () => {
     expect(
       cardResourceUrl([{ url: "/local/not-somtoday-card.json" }]),
     ).toBeNull();
+  });
+});
+
+describe("workKind", () => {
+  it("keeps homework and both test flavours", () => {
+    expect(workKind("homework")).toBe("homework");
+    expect(workKind("test")).toBe("test");
+    expect(workKind("large_test")).toBe("test");
+  });
+  it("gives lesson material its own kind", () => {
+    expect(workKind("lesson_material")).toBe("lesson_material");
+  });
+  it("never shows an unknown type as a test", () => {
+    expect(workKind("unknown")).toBe("other");
+    expect(workKind(undefined)).toBe("other");
   });
 });

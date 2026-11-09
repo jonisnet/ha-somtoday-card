@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.2
+
+### Fixed
+
+- **Lesson material and unknown study items no longer show up as a test.**
+  Every item that was not homework used to get the orange _Test_ chip. Lesson
+  material (`lesson_material`, Somtoday `LESSTOF`, recognised by integration
+  0.1.10) now has its own blue _Lesson material_ / _Lesstof_ chip, and any other
+  type a neutral _Other_ / _Overig_ chip. The item badges and the printed week
+  use the same labels.
+
 ## 0.3.1
 
 - **An update no longer needs the browser cache cleared.** HACS serves the card
