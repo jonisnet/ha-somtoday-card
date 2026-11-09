@@ -3,8 +3,12 @@ export const VIEWS = [
   "tomorrow",
   "week",
   "homework",
+  "assignments",
   "tests",
   "changes",
+  "grades",
+  "absences",
+  "messages",
 ];
 
 export function validateConfig(config) {
@@ -48,6 +52,10 @@ export const STUDENT_ENTITY_KEYS = {
   base_schedule_entity: "base_week",
   last_update_entity: "last_update",
   changes_entity: "schedule_changes",
+  next_holiday_entity: "next_holiday",
+  school_class_entity: "school_class",
+  assignments_entity: "assignments",
+  announcements_entity: "announcements",
 };
 
 const SOMTODAY_PLATFORM = "somtoday";
@@ -150,6 +158,11 @@ export function normalizeStudents(config = {}) {
     "upcoming_work_entity",
     "last_update_entity",
     "changes_entity",
+    "next_holiday_entity",
+    "school_class_entity",
+    "assignments_entity",
+    "announcements_entity",
+    "student_id",
   ];
   const student = {};
   for (const key of keys) if (config[key]) student[key] = config[key];
@@ -447,4 +460,329 @@ export function cardResourceUrl(resources = []) {
       /\/somtoday-card\.js(\?|$)/.test(String(resource?.url || "")),
     )?.url || null
   );
+}
+
+// ---------------------------------------------------------------------------
+// Holidays, the school year and the class
+// ---------------------------------------------------------------------------
+
+// A date-only ISO string ("2026-12-19") is midnight UTC to `new Date`, which is
+// the previous evening west of Greenwich. Read it as local noon instead.
+function localDate(value) {
+  if (!value) return null;
+  const text = String(value);
+  return parseTimestamp(
+    /^\d{4}-\d{2}-\d{2}$/.test(text) ? `${text}T12:00:00` : text,
+  );
+}
+
+// Whole calendar days from one YYYY-MM-DD to another, immune to DST.
+export function daysBetween(from, to) {
+  const [a, b] = [from, to].map((value) => {
+    const [year, month, day] = String(value || "")
+      .slice(0, 10)
+      .split("-")
+      .map(Number);
+    return Date.UTC(year, month - 1, day);
+  });
+  if (Number.isNaN(a) || Number.isNaN(b)) return null;
+  return Math.round((b - a) / 86400000);
+}
+
+export function formatShortDate(value, locale = "en") {
+  const date = localDate(value);
+  return date
+    ? new Intl.DateTimeFormat(locale, { day: "numeric", month: "short" })
+        .format(date)
+        .replace(/\.$/, "")
+    : "—";
+}
+
+function fill(template, values) {
+  return String(template || "").replace(
+    /\{(\w+)\}/g,
+    (_, key) => values[key] ?? "",
+  );
+}
+
+// The countdown line of the next_holiday sensor, worked out from its dates
+// against today rather than from `days_until`, which is only as fresh as the
+// last poll. `strings` is one language of TRANSLATIONS.
+export function holidayText(
+  attrs = {},
+  strings = {},
+  locale = "en",
+  today = localDateKey(),
+) {
+  const { name, start, end } = attrs || {};
+  if (!name || !start) return "";
+  const until = daysBetween(today, start);
+  if (until === null) return "";
+  if (until <= 0) {
+    const left = end ? daysBetween(today, end) : 0;
+    // Over, but the sensor has not moved on to the next holiday yet.
+    if (left === null || left < 0) return "";
+    return fill(strings.holiday_now, {
+      name,
+      end: formatShortDate(end || start, locale),
+    });
+  }
+  return fill(
+    until === 1 ? strings.holiday_countdown_one : strings.holiday_countdown,
+    { name, days: until },
+  );
+}
+
+export function schoolYearProgress(attrs = {}) {
+  const raw = attrs?.school_year_progress;
+  if (raw === undefined || raw === null || raw === "") return null;
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return null;
+  return Math.min(100, Math.max(0, Math.round(value)));
+}
+
+// ---------------------------------------------------------------------------
+// Assignments (hand-in work)
+// ---------------------------------------------------------------------------
+
+export const ASSIGNMENT_STATUSES = ["late", "open", "upcoming", "handed_in"];
+
+export const ASSIGNMENT_STATUS_COLORS = {
+  late: { color: "#8c1d18", background: "#ffd6d2" },
+  open: { color: "#0b4f8a", background: "#cfe5ff" },
+  upcoming: { color: "#444444", background: "#e0e0e0" },
+  handed_in: { color: "#176b35", background: "#b9f6ca" },
+};
+
+// Anything the card does not know yet is shown as open: it is safer to make a
+// pupil look at work than to hide it as handed in.
+export function assignmentStatus(status) {
+  return ASSIGNMENT_STATUSES.includes(status) ? status : "open";
+}
+
+// Late first, then by deadline; work already handed in sinks to the bottom.
+export function sortAssignments(items = []) {
+  const rank = { late: 0, open: 1, upcoming: 1, handed_in: 2 };
+  return [...(items || [])].sort(
+    (a, b) =>
+      rank[assignmentStatus(a?.status)] - rank[assignmentStatus(b?.status)] ||
+      String(a?.deadline || "9999").localeCompare(
+        String(b?.deadline || "9999"),
+      ),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Confidential records (somtoday.get_records)
+// ---------------------------------------------------------------------------
+
+export const RECORD_CATEGORIES = ["grades", "absences", "measures", "messages"];
+
+export const ABSENCE_KINDS = [
+  "unauthorised_absence",
+  "authorised_absence",
+  "absence_observed",
+  "late",
+  "removed_from_class",
+  "homework_not_done",
+  "materials_missing",
+];
+
+export function absenceKindKey(kind) {
+  return ABSENCE_KINDS.includes(kind) ? `absence_${kind}` : "absence_other";
+}
+
+const normalName = (value) =>
+  String(value || "")
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .trim()
+    .toLowerCase();
+
+const asId = (value) =>
+  value === null || value === undefined || value === "" ? null : Number(value);
+
+const entityIdsOf = (student = {}) =>
+  Object.entries(student)
+    .filter(([key, value]) => key.endsWith("_entity") && value)
+    .map(([, value]) => value);
+
+// How the card recognises its child in a get_records response: an explicit
+// `student_id` in the config, else the `student_id` attribute several of the
+// child's sensors carry, else the device identifier ("somtoday", "<id>"). The
+// name is only the last resort.
+export function studentMatch(hass, student = {}) {
+  const ids = entityIdsOf(student);
+  let studentId = Number.isFinite(asId(student.student_id))
+    ? asId(student.student_id)
+    : null;
+  let configEntryId = null;
+  for (const id of ids) {
+    const attrs = hass?.states?.[id]?.attributes || {};
+    if (studentId === null && Number.isFinite(asId(attrs.student_id))) {
+      studentId = asId(attrs.student_id);
+    }
+    if (!configEntryId && attrs.config_entry_id) {
+      configEntryId = attrs.config_entry_id;
+    }
+  }
+  for (const id of studentId === null ? ids : []) {
+    const device = hass?.devices?.[hass?.entities?.[id]?.device_id];
+    const pair = [...(device?.identifiers || [])].find(
+      (identifier) =>
+        Array.isArray(identifier) && identifier[0] === SOMTODAY_PLATFORM,
+    );
+    if (pair && Number.isFinite(asId(pair[1]))) {
+      studentId = asId(pair[1]);
+      break;
+    }
+  }
+  return { studentId, configEntryId, name: student.name || "" };
+}
+
+// The entity for one translation_key on the same device as the child's other
+// sensors, for configurations written before that field existed.
+export function entityForStudent(hass, student = {}, translationKey) {
+  const registry = hass?.entities;
+  if (!registry || !translationKey) return null;
+  const devices = new Set(
+    entityIdsOf(student)
+      .map((id) => registry[id]?.device_id)
+      .filter(Boolean),
+  );
+  if (!devices.size) return null;
+  return (
+    Object.entries(registry).find(
+      ([entityId, entry]) =>
+        entityId.startsWith("sensor.") &&
+        entry?.platform === SOMTODAY_PLATFORM &&
+        entry.translation_key === translationKey &&
+        devices.has(entry.device_id),
+    )?.[0] || null
+  );
+}
+
+export const EMPTY_RECORDS = Object.freeze({
+  found: false,
+  grades: null,
+  averages: null,
+  overallAverage: null,
+  absences: null,
+  measures: null,
+  messages: null,
+  unreadMessages: 0,
+});
+
+// Picks one child's records out of a get_records response. Every section is
+// either a list or null, and null means "do not show it": the user has no
+// access (the key is absent), or the school does not share it (the value is
+// null). The card does not tell those apart on screen.
+export function recordsFromResponse(response, match = {}) {
+  const entries = Array.isArray(response?.entries)
+    ? response.entries.filter(Boolean)
+    : [];
+  const pairs = entries.flatMap((entry) =>
+    (Array.isArray(entry.students) ? entry.students : [])
+      .filter(Boolean)
+      .map((student) => ({ entry, student })),
+  );
+  const wantedId = asId(match.studentId);
+  const found =
+    (wantedId !== null &&
+      pairs.find(({ student }) => asId(student.student_id) === wantedId)) ||
+    (match.name &&
+      pairs.find(
+        ({ student }) => normalName(student.name) === normalName(match.name),
+      )) ||
+    (wantedId === null && pairs.length === 1 ? pairs[0] : null);
+  const entry =
+    found?.entry ||
+    (match.configEntryId &&
+      entries.find((item) => item.config_entry_id === match.configEntryId)) ||
+    (entries.length === 1 ? entries[0] : null);
+  if (!entry) return { ...EMPTY_RECORDS };
+  const student = found?.student || null;
+  const allowed = (category) => entry.access?.[category] === true;
+  const list = (value) => (Array.isArray(value) ? value.filter(Boolean) : null);
+  const grades = allowed("grades") && student ? list(student.grades) : null;
+  const messages = allowed("messages") ? list(entry.messages) : null;
+  return {
+    found: Boolean(student),
+    grades,
+    averages: grades ? list(student.averages) || [] : null,
+    overallAverage:
+      grades && typeof student.overall_average === "number"
+        ? student.overall_average
+        : null,
+    absences: allowed("absences") && student ? list(student.absences) : null,
+    measures: allowed("measures") && student ? list(student.measures) : null,
+    messages,
+    unreadMessages: messages
+      ? Number.isInteger(entry.unread_messages)
+        ? entry.unread_messages
+        : messages.filter((message) => message.unread).length
+      : 0,
+  };
+}
+
+const newestFirst = (key) => (a, b) =>
+  String(b?.[key] || "").localeCompare(String(a?.[key] || ""));
+
+export function latestGrades(grades = [], count = 10) {
+  return [...(grades || [])].sort(newestFirst("entered")).slice(0, count);
+}
+
+export function sortAbsences(absences = []) {
+  return [...(absences || [])].sort(newestFirst("start"));
+}
+
+export function activeMeasures(measures = []) {
+  return [...(measures || [])]
+    .filter((item) => item && !item.completed)
+    .sort(newestFirst("date"));
+}
+
+export function sortMessages(messages = []) {
+  return [...(messages || [])].sort(newestFirst("sent"));
+}
+
+// "7,5" stays "7,5"; a bare number is written the local way, one decimal.
+export function formatGrade(result, value, locale = "en") {
+  if (result !== null && result !== undefined && result !== "") {
+    return String(result);
+  }
+  if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+  return new Intl.NumberFormat(locale, {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
+// The get_records call. The frontend's callService takes returnResponse as its
+// sixth argument (notifyOnError false keeps a refusal from popping a toast);
+// older frontends ignore it, and then the websocket command is used directly.
+export async function fetchRecords(hass) {
+  try {
+    const result = await hass.callService(
+      "somtoday",
+      "get_records",
+      {},
+      undefined,
+      false,
+      true,
+    );
+    if (result && typeof result === "object" && "response" in result) {
+      return result.response;
+    }
+  } catch {
+    // Fall through to the websocket call below.
+  }
+  const result = await hass.callWS({
+    type: "call_service",
+    domain: "somtoday",
+    service: "get_records",
+    service_data: {},
+    return_response: true,
+  });
+  return result?.response ?? null;
 }

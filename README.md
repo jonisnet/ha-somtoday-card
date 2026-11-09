@@ -6,7 +6,7 @@
 [![HA](https://img.shields.io/badge/Home%20Assistant-2025.4%2B-41bdf5?style=flat-square)](https://www.home-assistant.io)
 [![Downloads](https://img.shields.io/github/downloads/jonisnet/ha-somtoday-card/total?style=flat-square&label=downloads&cacheSeconds=86400)](https://github.com/jonisnet/ha-somtoday-card/releases)
 
-A responsive Home Assistant Lovelace card for the [`jonisnet/ha-somtoday`](https://github.com/jonisnet/ha-somtoday) integration. It shows a horizontal week timetable, the next school day, homework and the next test. Lessons, homework and tests open in a Home Assistant-native dialog.
+A responsive Home Assistant Lovelace card for the [`jonisnet/ha-somtoday`](https://github.com/jonisnet/ha-somtoday) integration. It shows a horizontal week timetable, the next school day, homework, assignments and the next test, a holiday countdown — and, for users who have been given access, grades, absences and messages. Lessons, homework and tests open in a Home Assistant-native dialog.
 
 ## Installation
 
@@ -61,6 +61,10 @@ next_lesson_entity: sensor.somtoday_sanne_jansen_volgende_les
 next_test_entity: sensor.somtoday_sanne_jansen_volgende_toets
 base_schedule_entity: sensor.somtoday_sanne_jansen_basisrooster
 last_update_entity: sensor.somtoday_sanne_jansen_laatste_update
+next_holiday_entity: sensor.somtoday_sanne_jansen_volgende_vakantie
+school_class_entity: sensor.somtoday_sanne_jansen_klas
+assignments_entity: sensor.somtoday_sanne_jansen_inleveropdrachten
+announcements_entity: sensor.somtoday_sanne_jansen_meldingen
 ```
 
 With more than one child it becomes a `students` list instead, sorted by name so
@@ -107,16 +111,67 @@ subject_colors:
 
 ### Options
 
-| Option              | Description                                                 |
-| ------------------- | ----------------------------------------------------------- |
-| `title`             | Card heading                                                |
-| `default_view`      | `day`, `tomorrow`, `week`, `homework`, `tests` or `changes` |
-| `show_view_tabs`    | Show the in-card view switcher                              |
-| `name`              | Pupil name in the heading, for a single child               |
-| `students`          | One entry per child, when there is more than one            |
-| `student_order`     | `manual` (default, the list order) or `name`                |
-| `show_all_students` | Offer "All children" on Today, Tomorrow and Changes         |
-| `subject_colors`    | Subject name to CSS color mapping                           |
+| Option              | Description                                                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `title`             | Card heading                                                                                                 |
+| `default_view`      | `day`, `tomorrow`, `week`, `homework`, `assignments`, `tests`, `changes`, `grades`, `absences` or `messages` |
+| `show_view_tabs`    | Show the in-card view switcher                                                                               |
+| `name`              | Pupil name in the heading, for a single child                                                                |
+| `students`          | One entry per child, when there is more than one                                                             |
+| `student_order`     | `manual` (default, the list order) or `name`                                                                 |
+| `show_all_students` | Offer "All children" on Today, Tomorrow and Changes                                                          |
+| `subject_colors`    | Subject name to CSS color mapping                                                                            |
+
+Each section has its own switch in the editor. All of them are on by default;
+set one to `false` to hide it:
+
+| Option               | Section                                           |
+| -------------------- | ------------------------------------------------- |
+| `show_holidays`      | Holiday countdown under the heading               |
+| `show_school_year`   | School-year progress bar                          |
+| `show_school_class`  | Class in the heading                              |
+| `show_announcements` | Banner with Somtoday's own notices                |
+| `show_assignments`   | _Assignments_ view                                |
+| `show_grades`        | Latest grades in the _Grades_ view                |
+| `show_averages`      | Subject averages and overall average              |
+| `show_absences`      | Absences in the _Absences_ view                   |
+| `show_measures`      | Measures that are still running, in the same view |
+| `show_messages`      | _Messages_ view                                   |
+
+### Grades, absences and messages (cijfers, afwezigheid en berichten)
+
+These are confidential, so the integration never puts them in a sensor —
+anyone signed in to Home Assistant can read every sensor. The card asks for
+them instead through the `somtoday.get_records` service, which answers per
+signed-in Home Assistant user.
+
+**Nobody has access by default.** The owner gives it per category: **Settings →
+Devices & services → Somtoday → Configure**, and tick the Home Assistant users
+who may see grades, absences, measures and messages. (_Instellingen → Apparaten
+en diensten → Somtoday → Configureren_.) A parent can see everything while a
+child, or a wall tablet's user, sees only the timetable.
+
+On the card a view without access simply does not appear; there is no error or
+lock icon. The same goes for a category the school does not share. Messages
+belong to the Somtoday account, so every child of that account shows the same
+ones.
+
+The card fetches the records when the dashboard opens, every fifteen minutes
+while it is visible, and when the app or tab comes back into view — never in
+the background. They are kept in memory only, not in the browser's storage, and
+never written to the console. To find the right child the card uses the
+`student_id` of its sensors (or the device); with an unusual setup you can set
+`student_id` per child yourself.
+
+The service can also be used in your own automations or scripts:
+
+```yaml
+action: somtoday.get_records
+data:
+  categories: [grades]
+  limit: 5
+response_variable: records
+```
 
 Mappings take precedence. Unmapped, school-specific abbreviations receive a
 stable generated accent, so the card never depends on a hardcoded subject list.
@@ -176,6 +231,11 @@ entity names themselves differ per language:
 | Tests            | `next_test` and `upcoming_work`              |
 | Own appointments | `planner`                                    |
 | Changes          | `schedule_changes` (Somtoday 0.1.9 or newer) |
+| Holidays, year   | `next_holiday` (Somtoday 0.2.0 or newer)     |
+| Class            | `school_class` (Somtoday 0.2.0 or newer)     |
+| Assignments      | `assignments` (Somtoday 0.2.0 or newer)      |
+| Notices          | `announcements` (Somtoday 0.2.0 or newer)    |
+| Grades, absences | `somtoday.get_records` service, not a sensor |
 
 Browsing further ahead uses the integration's future-week sensors, which are
 found at runtime through their `week_offset` attribute and need no configuration.

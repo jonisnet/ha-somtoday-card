@@ -228,6 +228,10 @@ describe("auto-detecting students from the entity registry", () => {
     base_week: "basisrooster",
     last_update: "laatste_update",
     schedule_changes: "roosterwijzigingen",
+    next_holiday: "volgende_vakantie",
+    school_class: "klas",
+    assignments: "inleveropdrachten",
+    announcements: "meldingen",
   };
 
   it("fills every card field for a single student", () => {

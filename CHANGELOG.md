@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.4.0
+
+Needs Somtoday 0.2.0 for the new parts; with an older integration the card
+works as before and simply leaves them out.
+
+### Added
+
+- **Holiday countdown and school year.** A quiet line under the heading:
+  _Nog 12 dagen tot de Kerstvakantie_, during the holiday _Kerstvakantie t/m
+  3 jan_, and a small bar showing how far the school year is.
+- **The class in the heading**, with the programme, e.g. _Klas 1A · havo/vwo_.
+- **Assignments view** (_Inleveren_): work to hand in with its deadline and a
+  status chip — late in red, open, not open yet, handed in.
+- **Somtoday notices**: a banner when Somtoday announces an outage or
+  maintenance.
+- **Homework shows Somtoday's time estimate and the teacher's links**, which
+  open in a new tab.
+- **Grades, absences and messages**, for users who have been given access:
+  latest grades (insufficient results in red, weight, date), subject averages
+  with the overall average, absences and late arrivals, measures that are still
+  running, and the account's messages with an unread dot and an expandable
+  body. These never come from an entity: the card asks the integration's
+  `somtoday.get_records` service, which checks the signed-in user. Nothing of it
+  is stored in the browser or written to the console. A view without access or
+  data is not shown at all.
+- **A switch per section** in the editor. Everything is on by default.
+- Existing cards pick up the new sensors by themselves, through the child's
+  device; new cards get the fields filled in like the others.
+
+### Changed
+
+- Homework and test items are now `div role="button"` instead of `<button>`,
+  so their links work in every browser. Keyboard use (Enter, Space) is the same.
+
 ## 0.3.2
 
 ### Fixed
