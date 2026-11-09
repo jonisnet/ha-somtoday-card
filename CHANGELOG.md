@@ -1,5 +1,76 @@
 # Changelog
 
+## 0.4.0-beta.4
+
+### Fixed
+
+- **Dropdowns in the card editor work again on Home Assistant 2026.10+.**
+  The new `ha-select` ignores `<mwc-list-item>` children and reports the choice
+  in `event.detail.value`, so _Default view_, _Grade level_ and _Order of the
+  children_ silently kept their old value. The editor now passes `options` and
+  reads the new event, and still works on older versions.
+
+## 0.4.0-beta.3
+
+Grade levels need Somtoday 0.2.0-beta.2 or newer.
+
+### Added
+
+- **Both levels of a dual-level class.** For classes graded on two levels
+  (vmbo BB/KB) every grade and average shows both figures. `grade_level`
+  (card-wide, or per child under `students`) picks which one is big:
+  `both_main_first` (default), `both_alt_first`, `main` or `alt`.
+
+### Fixed
+
+- **A block without a subject is named.** A mentor or project block (for
+  example "STARR") showed "—"; it now shows its own title.
+- **A block over several periods is one row.** A lesson without period numbers
+  that runs 13:00–14:30 now fills periods 6–7 instead of leaving period 7
+  marked as free.
+
+## 0.4.0-beta.2
+
+### Added
+
+- **Open a tab from a link.** `?somtoday_view=grades` (and optionally
+  `&somtoday_student=<id>`) in the page address opens the card on that tab and
+  child, so a notification leads straight to the new grade or message.
+
+## 0.4.0-beta.1
+
+Needs Somtoday 0.2.0-beta.1 or newer for the new parts; with an older integration the card
+works as before and simply leaves them out.
+
+### Added
+
+- **Holiday countdown and school year.** A quiet line under the heading:
+  _Nog 12 dagen tot de Kerstvakantie_, during the holiday _Kerstvakantie t/m
+  3 jan_, and a small bar showing how far the school year is.
+- **The class in the heading**, with the programme, e.g. _Klas 1A · havo/vwo_.
+- **Assignments view** (_Inleveren_): work to hand in with its deadline and a
+  status chip — late in red, open, not open yet, handed in.
+- **Somtoday notices**: a banner when Somtoday announces an outage or
+  maintenance.
+- **Homework shows Somtoday's time estimate and the teacher's links**, which
+  open in a new tab.
+- **Grades, absences and messages**, for users who have been given access:
+  latest grades (insufficient results in red, weight, date), subject averages
+  with the overall average, absences and late arrivals, measures that are still
+  running, and the account's messages with an unread dot and an expandable
+  body. These never come from an entity: the card asks the integration's
+  `somtoday.get_records` service, which checks the signed-in user. Nothing of it
+  is stored in the browser or written to the console. A view without access or
+  data is not shown at all.
+- **A switch per section** in the editor. Everything is on by default.
+- Existing cards pick up the new sensors by themselves, through the child's
+  device; new cards get the fields filled in like the others.
+
+### Changed
+
+- Homework and test items are now `div role="button"` instead of `<button>`,
+  so their links work in every browser. Keyboard use (Enter, Space) is the same.
+
 ## 0.3.2
 
 ### Fixed

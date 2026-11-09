@@ -1,4 +1,4 @@
-/* Somtoday Card v0.3.2 */
+/* Somtoday Card v0.4.0-beta.4 */
 (() => {
   // src/helpers.js
   var VIEWS = [
@@ -6,9 +6,22 @@
     "tomorrow",
     "week",
     "homework",
+    "assignments",
     "tests",
-    "changes"
+    "changes",
+    "grades",
+    "absences",
+    "messages"
   ];
+  function parseCardLink(search = "") {
+    const params = new URLSearchParams(search);
+    const view = params.get("somtoday_view");
+    const student = params.get("somtoday_student");
+    return {
+      view: VIEWS.includes(view) ? view : null,
+      studentId: student !== null && student !== "" && Number.isFinite(Number(student)) ? Number(student) : null
+    };
+  }
   function validateConfig(config) {
     if (!config || typeof config !== "object")
       throw new Error("Configuration is required");
@@ -27,6 +40,13 @@
     if (config.student_order && !STUDENT_ORDERS.includes(config.student_order)) {
       throw new Error(`Unknown student_order: ${config.student_order}`);
     }
+    for (const level of [
+      config.grade_level,
+      ...(config.students || []).map((s) => s?.grade_level)
+    ]) {
+      if (level && !GRADE_LEVELS.includes(level))
+        throw new Error(`Unknown grade_level: ${level}`);
+    }
     return true;
   }
   var STUDENT_ENTITY_KEYS = {
@@ -42,7 +62,11 @@
     next_test_entity: "next_test",
     base_schedule_entity: "base_week",
     last_update_entity: "last_update",
-    changes_entity: "schedule_changes"
+    changes_entity: "schedule_changes",
+    next_holiday_entity: "next_holiday",
+    school_class_entity: "school_class",
+    assignments_entity: "assignments",
+    announcements_entity: "announcements"
   };
   var SOMTODAY_PLATFORM = "somtoday";
   var WEEK_ID_PATTERN = /^sensor\.somtoday_.+_(?:deze_week|this_week)(?:_\d+)?$/;
@@ -111,7 +135,12 @@
       "next_week_entity",
       "upcoming_work_entity",
       "last_update_entity",
-      "changes_entity"
+      "changes_entity",
+      "next_holiday_entity",
+      "school_class_entity",
+      "assignments_entity",
+      "announcements_entity",
+      "student_id"
     ];
     const student = {};
     for (const key of keys) if (config[key]) student[key] = config[key];
@@ -180,25 +209,46 @@
     [9, "15:30", "16:15"],
     [10, "16:15", "17:00"]
   ];
+  function lessonName(lesson = {}) {
+    return lesson.subject || lesson.subject_short || lesson.title || "\u2014";
+  }
+  function clock(value) {
+    return String(value || "").slice(11, 16);
+  }
+  function lessonCovers(item, period, startTime, endTime) {
+    const first = Number(item.period_start ?? item.period);
+    if (first)
+      return first <= period && Number(item.period_end ?? first) >= period || clock(item.start) === startTime;
+    const start = clock(item.start);
+    const end = clock(item.end);
+    return Boolean(start) && start < endTime && (end ? end > startTime : start === startTime);
+  }
   function buildSchoolDayTimeline(date, lessons = [], appointments = []) {
     const sample = lessons.find((lesson) => lesson.start)?.start || "";
     const offset = String(sample).match(/(Z|[+-]\d\d:\d\d)$/)?.[1] || "";
     const timeline = [];
+    let previous = null;
     LESSON_PERIOD_SLOTS.forEach(([period, startTime, endTime], index) => {
-      const lesson = lessons.find((item) => {
-        const first = Number(item.period_start ?? item.period);
-        const last = Number(item.period_end ?? first);
-        return first && first <= period && last >= period || String(item.start || "").slice(11, 16) === startTime;
-      });
+      const lesson = lessons.find(
+        (item) => lessonCovers(item, period, startTime, endTime)
+      );
       const start = `${date}T${startTime}:00${offset}`;
       const end = `${date}T${endTime}:00${offset}`;
-      timeline.push({
-        type: lesson ? "lesson" : "empty_lesson",
-        start,
-        end,
-        period,
-        item: lesson
-      });
+      if (lesson && previous?.item === lesson) {
+        timeline.splice(timeline.indexOf(previous) + 1);
+        previous.end = end;
+        previous.period_end = period;
+      } else {
+        previous = {
+          type: lesson ? "lesson" : "empty_lesson",
+          start,
+          end,
+          period,
+          period_end: period,
+          item: lesson
+        };
+        timeline.push(previous);
+      }
       const next = LESSON_PERIOD_SLOTS[index + 1];
       if (next && next[1] !== endTime) {
         timeline.push(...splitSchoolGap(end, `${date}T${next[1]}:00${offset}`));
@@ -316,6 +366,229 @@
       (resource) => /\/somtoday-card\.js(\?|$)/.test(String(resource?.url || ""))
     )?.url || null;
   }
+  function localDate(value) {
+    if (!value) return null;
+    const text = String(value);
+    return parseTimestamp(
+      /^\d{4}-\d{2}-\d{2}$/.test(text) ? `${text}T12:00:00` : text
+    );
+  }
+  function daysBetween(from, to) {
+    const [a, b] = [from, to].map((value) => {
+      const [year, month, day] = String(value || "").slice(0, 10).split("-").map(Number);
+      return Date.UTC(year, month - 1, day);
+    });
+    if (Number.isNaN(a) || Number.isNaN(b)) return null;
+    return Math.round((b - a) / 864e5);
+  }
+  function formatShortDate(value, locale = "en") {
+    const date = localDate(value);
+    return date ? new Intl.DateTimeFormat(locale, { day: "numeric", month: "short" }).format(date).replace(/\.$/, "") : "\u2014";
+  }
+  function fill(template, values) {
+    return String(template || "").replace(
+      /\{(\w+)\}/g,
+      (_, key) => values[key] ?? ""
+    );
+  }
+  function holidayText(attrs = {}, strings = {}, locale = "en", today = localDateKey()) {
+    const { name, start, end } = attrs || {};
+    if (!name || !start) return "";
+    const until = daysBetween(today, start);
+    if (until === null) return "";
+    if (until <= 0) {
+      const left = end ? daysBetween(today, end) : 0;
+      if (left === null || left < 0) return "";
+      return fill(strings.holiday_now, {
+        name,
+        end: formatShortDate(end || start, locale)
+      });
+    }
+    return fill(
+      until === 1 ? strings.holiday_countdown_one : strings.holiday_countdown,
+      { name, days: until }
+    );
+  }
+  function schoolYearProgress(attrs = {}) {
+    const raw = attrs?.school_year_progress;
+    if (raw === void 0 || raw === null || raw === "") return null;
+    const value = Number(raw);
+    if (!Number.isFinite(value)) return null;
+    return Math.min(100, Math.max(0, Math.round(value)));
+  }
+  var ASSIGNMENT_STATUSES = ["late", "open", "upcoming", "handed_in"];
+  function assignmentStatus(status) {
+    return ASSIGNMENT_STATUSES.includes(status) ? status : "open";
+  }
+  function sortAssignments(items = []) {
+    const rank = { late: 0, open: 1, upcoming: 1, handed_in: 2 };
+    return [...items || []].sort(
+      (a, b) => rank[assignmentStatus(a?.status)] - rank[assignmentStatus(b?.status)] || String(a?.deadline || "9999").localeCompare(
+        String(b?.deadline || "9999")
+      )
+    );
+  }
+  var ABSENCE_KINDS = [
+    "unauthorised_absence",
+    "authorised_absence",
+    "absence_observed",
+    "late",
+    "removed_from_class",
+    "homework_not_done",
+    "materials_missing"
+  ];
+  function absenceKindKey(kind) {
+    return ABSENCE_KINDS.includes(kind) ? `absence_${kind}` : "absence_other";
+  }
+  var normalName = (value) => String(value || "").normalize("NFKD").replace(/[̀-ͯ]/g, "").trim().toLowerCase();
+  var asId = (value) => value === null || value === void 0 || value === "" ? null : Number(value);
+  var entityIdsOf = (student = {}) => Object.entries(student).filter(([key, value]) => key.endsWith("_entity") && value).map(([, value]) => value);
+  function studentMatch(hass, student = {}) {
+    const ids = entityIdsOf(student);
+    let studentId = Number.isFinite(asId(student.student_id)) ? asId(student.student_id) : null;
+    let configEntryId = null;
+    for (const id of ids) {
+      const attrs = hass?.states?.[id]?.attributes || {};
+      if (studentId === null && Number.isFinite(asId(attrs.student_id))) {
+        studentId = asId(attrs.student_id);
+      }
+      if (!configEntryId && attrs.config_entry_id) {
+        configEntryId = attrs.config_entry_id;
+      }
+    }
+    for (const id of studentId === null ? ids : []) {
+      const device = hass?.devices?.[hass?.entities?.[id]?.device_id];
+      const pair = [...device?.identifiers || []].find(
+        (identifier) => Array.isArray(identifier) && identifier[0] === SOMTODAY_PLATFORM
+      );
+      if (pair && Number.isFinite(asId(pair[1]))) {
+        studentId = asId(pair[1]);
+        break;
+      }
+    }
+    return { studentId, configEntryId, name: student.name || "" };
+  }
+  function entityForStudent(hass, student = {}, translationKey) {
+    const registry = hass?.entities;
+    if (!registry || !translationKey) return null;
+    const devices = new Set(
+      entityIdsOf(student).map((id) => registry[id]?.device_id).filter(Boolean)
+    );
+    if (!devices.size) return null;
+    return Object.entries(registry).find(
+      ([entityId, entry]) => entityId.startsWith("sensor.") && entry?.platform === SOMTODAY_PLATFORM && entry.translation_key === translationKey && devices.has(entry.device_id)
+    )?.[0] || null;
+  }
+  var EMPTY_RECORDS = Object.freeze({
+    found: false,
+    grades: null,
+    averages: null,
+    overallAverage: null,
+    absences: null,
+    measures: null,
+    messages: null,
+    unreadMessages: 0
+  });
+  function recordsFromResponse(response, match = {}) {
+    const entries = Array.isArray(response?.entries) ? response.entries.filter(Boolean) : [];
+    const pairs = entries.flatMap(
+      (entry2) => (Array.isArray(entry2.students) ? entry2.students : []).filter(Boolean).map((student2) => ({ entry: entry2, student: student2 }))
+    );
+    const wantedId = asId(match.studentId);
+    const found = wantedId !== null && pairs.find(({ student: student2 }) => asId(student2.student_id) === wantedId) || match.name && pairs.find(
+      ({ student: student2 }) => normalName(student2.name) === normalName(match.name)
+    ) || (wantedId === null && pairs.length === 1 ? pairs[0] : null);
+    const entry = found?.entry || match.configEntryId && entries.find((item) => item.config_entry_id === match.configEntryId) || (entries.length === 1 ? entries[0] : null);
+    if (!entry) return { ...EMPTY_RECORDS };
+    const student = found?.student || null;
+    const allowed = (category) => entry.access?.[category] === true;
+    const list = (value) => Array.isArray(value) ? value.filter(Boolean) : null;
+    const grades = allowed("grades") && student ? list(student.grades) : null;
+    const messages = allowed("messages") ? list(entry.messages) : null;
+    return {
+      found: Boolean(student),
+      grades,
+      averages: grades ? list(student.averages) || [] : null,
+      overallAverage: grades && typeof student.overall_average === "number" ? student.overall_average : null,
+      absences: allowed("absences") && student ? list(student.absences) : null,
+      measures: allowed("measures") && student ? list(student.measures) : null,
+      messages,
+      unreadMessages: messages ? Number.isInteger(entry.unread_messages) ? entry.unread_messages : messages.filter((message) => message.unread).length : 0
+    };
+  }
+  var newestFirst = (key) => (a, b) => String(b?.[key] || "").localeCompare(String(a?.[key] || ""));
+  function latestGrades(grades = [], count = 10) {
+    return [...grades || []].sort(newestFirst("entered")).slice(0, count);
+  }
+  function sortAbsences(absences = []) {
+    return [...absences || []].sort(newestFirst("start"));
+  }
+  function activeMeasures(measures = []) {
+    return [...measures || []].filter((item) => item && !item.completed).sort(newestFirst("date"));
+  }
+  function sortMessages(messages = []) {
+    return [...messages || []].sort(newestFirst("sent"));
+  }
+  function formatGrade(result, value, locale = "en") {
+    if (result !== null && result !== void 0 && result !== "") {
+      return String(result);
+    }
+    if (typeof value !== "number" || !Number.isFinite(value)) return "\u2014";
+    return new Intl.NumberFormat(locale, {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1
+    }).format(value);
+  }
+  async function fetchRecords(hass) {
+    try {
+      const result2 = await hass.callService(
+        "somtoday",
+        "get_records",
+        {},
+        void 0,
+        false,
+        true
+      );
+      if (result2 && typeof result2 === "object" && "response" in result2) {
+        return result2.response;
+      }
+    } catch {
+    }
+    const result = await hass.callWS({
+      type: "call_service",
+      domain: "somtoday",
+      service: "get_records",
+      service_data: {},
+      return_response: true
+    });
+    return result?.response ?? null;
+  }
+  var GRADE_LEVELS = [
+    "both_main_first",
+    "both_alt_first",
+    "main",
+    "alt"
+  ];
+  function gradeLevels(item = {}, level = "both_main_first") {
+    const main = {
+      level: item.level || null,
+      result: item.result,
+      value: item.value,
+      sufficient: item.sufficient
+    };
+    const hasAlt = (item.alt_result ?? null) !== null || (item.alt_value ?? null) !== null;
+    if (!hasAlt) return { primary: main, secondary: null };
+    const alt = {
+      level: item.alt_level || null,
+      result: item.alt_result,
+      value: item.alt_value,
+      sufficient: item.alt_sufficient
+    };
+    if (level === "main") return { primary: main, secondary: null };
+    if (level === "alt") return { primary: alt, secondary: null };
+    if (level === "both_alt_first") return { primary: alt, secondary: main };
+    return { primary: main, secondary: alt };
+  }
 
   // src/translations.js
   var TRANSLATIONS = {
@@ -385,7 +658,65 @@
       change_room_changed: "Different room",
       change_teacher_changed: "Different teacher",
       change_added: "Added",
-      change_removed: "Removed"
+      change_removed: "Removed",
+      assignments: "Assignments",
+      grades: "Grades",
+      absences: "Absences",
+      messages: "Messages",
+      holiday_countdown: "{days} days until {name}",
+      holiday_countdown_one: "1 day until {name}",
+      holiday_now: "{name} until {end}",
+      school_year: "School year",
+      class: "Class",
+      status_late: "Late",
+      status_open: "Open",
+      status_upcoming: "Not open yet",
+      status_handed_in: "Handed in",
+      deadline: "Deadline",
+      opens: "Opens",
+      no_assignments: "No assignments to hand in",
+      time_indication: "Time",
+      links: "Links",
+      latest_grades: "Latest grades",
+      averages: "Averages",
+      overall_average: "Overall average",
+      weight: "weight",
+      resit: "Resit",
+      no_grades: "No grades yet",
+      measures: "Measures",
+      no_absences: "No absences registered",
+      absence_unauthorised_absence: "Unauthorised absence",
+      absence_authorised_absence: "Authorised absence",
+      absence_absence_observed: "Absent",
+      absence_late: "Late",
+      absence_removed_from_class: "Removed from class",
+      absence_homework_not_done: "Homework not done",
+      absence_materials_missing: "Materials missing",
+      absence_other: "Registration",
+      authorised: "Authorised",
+      handled: "Handled",
+      no_messages: "No messages",
+      unread: "Unread",
+      from: "From",
+      attachments: "attachments",
+      notice: "Somtoday notice",
+      editor_sections: "Sections",
+      editor_show_holidays: "Holiday countdown",
+      editor_show_school_year: "School-year progress",
+      editor_show_school_class: "Class in the heading",
+      editor_show_announcements: "Somtoday notices",
+      editor_show_assignments: "Assignments",
+      editor_show_grades: "Grades",
+      editor_show_averages: "Averages",
+      editor_grade_level: "Grade level (dual-level classes, e.g. BB/KB)",
+      grade_level_both_main_first: "Both, first level on top",
+      grade_level_both_alt_first: "Both, second level on top (e.g. KB)",
+      grade_level_main: "Only the first level",
+      grade_level_alt: "Only the second level (e.g. KB)",
+      editor_show_absences: "Absences",
+      editor_show_measures: "Measures",
+      editor_show_messages: "Messages",
+      editor_records_hint: "Grades, absences, measures and messages only appear for Home Assistant users the owner has given access in the Somtoday integration options."
     },
     nl: {
       title: "Somtoday",
@@ -453,12 +784,70 @@
       change_room_changed: "Ander lokaal",
       change_teacher_changed: "Andere docent",
       change_added: "Toegevoegd",
-      change_removed: "Verwijderd"
+      change_removed: "Verwijderd",
+      assignments: "Inleveren",
+      grades: "Cijfers",
+      absences: "Afwezigheid",
+      messages: "Berichten",
+      holiday_countdown: "Nog {days} dagen tot de {name}",
+      holiday_countdown_one: "Nog 1 dag tot de {name}",
+      holiday_now: "{name} t/m {end}",
+      school_year: "Schooljaar",
+      class: "Klas",
+      status_late: "Te laat",
+      status_open: "Open",
+      status_upcoming: "Nog niet open",
+      status_handed_in: "Ingeleverd",
+      deadline: "Deadline",
+      opens: "Opent",
+      no_assignments: "Geen opdrachten om in te leveren",
+      time_indication: "Tijd",
+      links: "Links",
+      latest_grades: "Laatste cijfers",
+      averages: "Gemiddelden",
+      overall_average: "Totaalgemiddelde",
+      weight: "weging",
+      resit: "Herkansing",
+      no_grades: "Nog geen cijfers",
+      measures: "Maatregelen",
+      no_absences: "Geen afwezigheid geregistreerd",
+      absence_unauthorised_absence: "Ongeoorloofd afwezig",
+      absence_authorised_absence: "Geoorloofd afwezig",
+      absence_absence_observed: "Afwezig",
+      absence_late: "Te laat",
+      absence_removed_from_class: "Uit de les verwijderd",
+      absence_homework_not_done: "Huiswerk niet gemaakt",
+      absence_materials_missing: "Materiaal vergeten",
+      absence_other: "Registratie",
+      authorised: "Geoorloofd",
+      handled: "Afgehandeld",
+      no_messages: "Geen berichten",
+      unread: "Ongelezen",
+      from: "Van",
+      attachments: "bijlagen",
+      notice: "Melding van Somtoday",
+      editor_sections: "Onderdelen",
+      editor_show_holidays: "Aftellen naar de vakantie",
+      editor_show_school_year: "Voortgang van het schooljaar",
+      editor_show_school_class: "Klas in de kop",
+      editor_show_announcements: "Meldingen van Somtoday",
+      editor_show_assignments: "Inleveropdrachten",
+      editor_show_grades: "Cijfers",
+      editor_show_averages: "Gemiddelden",
+      editor_grade_level: "Cijferniveau (klassen met twee niveaus, bijv. BB/KB)",
+      grade_level_both_main_first: "Beide, eerste niveau groot",
+      grade_level_both_alt_first: "Beide, tweede niveau groot (bijv. KB)",
+      grade_level_main: "Alleen het eerste niveau",
+      grade_level_alt: "Alleen het tweede niveau (bijv. KB)",
+      editor_show_absences: "Afwezigheid",
+      editor_show_measures: "Maatregelen",
+      editor_show_messages: "Berichten",
+      editor_records_hint: "Cijfers, afwezigheid, maatregelen en berichten verschijnen alleen voor Home Assistant-gebruikers die de eigenaar daar in de opties van de Somtoday-integratie toegang toe heeft gegeven."
     }
   };
 
   // src/somtoday-card.js
-  var VERSION = true ? "0.3.2" : "dev";
+  var VERSION = true ? "0.4.0-beta.4" : "dev";
   var DAY_VIEWS = ["day", "tomorrow", "changes"];
   var ALL_STUDENTS = -1;
   var getLit = () => {
@@ -522,6 +911,49 @@
     } finally {
       updateState.running = false;
     }
+  }
+  var RECORDS_INTERVAL = 15 * 60 * 1e3;
+  var RECORDS_ON_RETURN = 60 * 1e3;
+  var RECORD_SECTIONS = [
+    "show_grades",
+    "show_averages",
+    "show_absences",
+    "show_measures",
+    "show_messages"
+  ];
+  var recordsState = {
+    at: 0,
+    user: null,
+    running: false,
+    stale: false,
+    response: null,
+    cards: /* @__PURE__ */ new Set()
+  };
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    if (Date.now() - recordsState.at >= RECORDS_ON_RETURN) recordsState.stale = true;
+    for (const card of recordsState.cards) card._maybeFetchRecords();
+  });
+  async function refreshRecords(hass) {
+    const user = hass.user?.id || null;
+    if (user !== recordsState.user) {
+      recordsState.user = user;
+      recordsState.response = null;
+      recordsState.at = 0;
+    }
+    if (recordsState.running || document.visibilityState === "hidden") return;
+    if (!recordsState.stale && Date.now() - recordsState.at < RECORDS_INTERVAL) return;
+    recordsState.running = true;
+    recordsState.stale = false;
+    recordsState.at = Date.now();
+    try {
+      const response = await fetchRecords(hass);
+      if (recordsState.user === user) recordsState.response = response;
+    } catch {
+    } finally {
+      recordsState.running = false;
+    }
+    for (const card of recordsState.cards) card.requestUpdate();
   }
   function fireConfigChanged(element, config) {
     element.dispatchEvent(
@@ -705,6 +1137,7 @@
     }
     .lesson,
     .item {
+      box-sizing: border-box;
       width: 100%;
       text-align: left;
       border: 0;
@@ -864,6 +1297,61 @@
       display: block;
       margin: 0 auto 8px;
     }
+    .info-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin: 10px 14px 0; font-size: 0.85rem; }
+    .info-strip > span { display: inline-flex; align-items: center; gap: 6px; }
+    .info-strip ha-icon { --mdc-icon-size: 18px; color: var(--secondary-text-color); }
+    .year-progress { flex: 1 1 180px; min-width: 140px; }
+    .year-progress .bar { flex: 1; height: 6px; border-radius: 999px; overflow: hidden; background: color-mix(in srgb, var(--primary-text-color) 12%, transparent); }
+    .year-progress .bar > span { display: block; height: 100%; border-radius: inherit; background: var(--primary-color); }
+    .year-progress small { color: var(--secondary-text-color); white-space: nowrap; }
+    .notices { display: grid; gap: 6px; margin: 10px 14px 0; }
+    .notice { --notice-color: var(--info-color, var(--primary-color)); display: flex; gap: 8px; padding: 8px 10px; border-radius: 10px; font-size: 0.85rem; border-left: 4px solid var(--notice-color); background: color-mix(in srgb, var(--notice-color) 14%, transparent); }
+    .notice.warning { --notice-color: var(--warning-color); }
+    .notice.error { --notice-color: var(--error-color); }
+    .notice.positive { --notice-color: var(--success-color); }
+    .notice ha-icon { --mdc-icon-size: 18px; color: var(--notice-color); flex: none; }
+    .notice strong { display: block; }
+    .status-chip { border-radius: 999px; padding: 2px 7px; font-size: 0.7rem; font-weight: 700; white-space: nowrap; }
+    .status-chip.late { color: #8c1d18; background: #ffd6d2; }
+    .status-chip.open { color: #0b4f8a; background: #cfe5ff; }
+    .status-chip.upcoming { color: #444444; background: #e0e0e0; }
+    .status-chip.handed_in { color: #176b35; background: #b9f6ca; }
+    .item.late { border-left-color: var(--error-color); }
+    .item.handed_in { opacity: 0.7; }
+    .links { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 6px; font-size: 0.8rem; }
+    .links a { color: var(--primary-color); text-decoration: none; display: inline-flex; align-items: center; gap: 3px; overflow-wrap: anywhere; }
+    .links a:hover { text-decoration: underline; }
+    .links ha-icon, .meta ha-icon, .message ha-icon { --mdc-icon-size: 14px; }
+    .section-title { margin: 14px 2px 8px; font-size: 0.95rem; font-weight: 600; }
+    .section-title:first-child { margin-top: 0; }
+    .record { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 4px 12px; padding: 8px 10px; border-radius: 9px; border-left: 4px solid var(--subject-color, var(--primary-color)); background: color-mix(in srgb, var(--subject-color, var(--primary-color)) 8%, var(--card-background-color)); }
+    .record .result { min-width: 2.6em; text-align: center; font-size: 1.15rem; font-weight: 700; display: flex; flex-direction: column; align-items: center; line-height: 1.15; }
+    .grade-main .level { font-size: 0.62rem; font-weight: 700; margin-right: 3px; opacity: .75; vertical-align: middle; }
+    .grade-other { display: block; font-size: 0.68rem; font-weight: 600; color: var(--secondary-text-color); }
+    .averages .grade-other { display: inline; margin-left: 6px; }
+    .insufficient { color: var(--error-color); }
+    .record .what { min-width: 0; }
+    .record .what > div:first-child { font-weight: 600; overflow-wrap: anywhere; }
+    .record .when { text-align: right; color: var(--secondary-text-color); font-size: 0.78rem; white-space: nowrap; }
+    .averages { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+    .averages td { padding: 6px 4px; border-bottom: 1px solid var(--divider-color); }
+    .averages td:last-child { text-align: right; font-weight: 600; white-space: nowrap; }
+    .averages tr.overall td { font-weight: 700; border-bottom-width: 2px; }
+    .kind-chip { border-radius: 999px; padding: 2px 7px; font-size: 0.7rem; font-weight: 700; white-space: nowrap; color: var(--primary-text-color); background: color-mix(in srgb, var(--warning-color) 22%, transparent); }
+    .kind-chip.unauthorised_absence, .kind-chip.removed_from_class { background: color-mix(in srgb, var(--error-color) 22%, transparent); }
+    .kind-chip.authorised_absence { background: color-mix(in srgb, var(--success-color, #43a047) 22%, transparent); }
+    details.message { border-radius: 9px; border-left: 4px solid var(--divider-color); background: color-mix(in srgb, var(--primary-color) 5%, var(--card-background-color)); }
+    details.message.unread { border-left-color: var(--primary-color); }
+    details.message summary { list-style: none; cursor: pointer; padding: 8px 10px; display: grid; grid-template-columns: auto 1fr auto; gap: 2px 10px; align-items: center; }
+    details.message summary::-webkit-details-marker { display: none; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: transparent; }
+    .unread .dot { background: var(--primary-color); }
+    .message .subject { font-weight: 600; overflow-wrap: anywhere; }
+    .unread .subject { font-weight: 700; }
+    .message .sender { grid-column: 2; color: var(--secondary-text-color); font-size: 0.78rem; }
+    .message .when { grid-row: 1; grid-column: 3; color: var(--secondary-text-color); font-size: 0.78rem; white-space: nowrap; }
+    .message .body { padding: 0 12px 12px 28px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.88rem; }
+    .tab .unread-count { display: inline-block; min-width: 1.3em; margin-left: 4px; padding: 0 4px; border-radius: 999px; font-size: 0.72rem; background: var(--error-color); color: white; }
     ha-dialog {
       --mdc-dialog-min-width: min(520px, calc(100vw - 32px));
       --mdc-dialog-max-width: 680px;
@@ -924,9 +1412,12 @@
         (student) => Object.entries(student).filter(([key]) => key.endsWith("_entity")).map(([, id]) => id)
       );
       const automaticWeekIds = Object.values(value?.states || {}).filter((state) => Number.isInteger(state.attributes?.week_offset)).map((state) => state.entity_id);
-      const relevant = [.../* @__PURE__ */ new Set([...ids, ...automaticWeekIds])].map((id) => `${id}:${value?.states?.[id]?.last_updated || ""}`).join("|");
+      const integrationIds = Object.values(value?.entities || {}).filter((entry) => entry.platform === "somtoday").map((entry) => entry.entity_id);
+      const relevant = [.../* @__PURE__ */ new Set([...ids, ...automaticWeekIds, ...integrationIds])].map((id) => `${id}:${value?.states?.[id]?.last_updated || ""}`).join("|");
       this._hass = value;
       if (value) checkForNewerCard(value);
+      if (value) this._maybeFetchRecords();
+      if (value && this.isConnected) this._applyLink();
       if (relevant !== this._lastRelevant) {
         this._lastRelevant = relevant;
         this.requestUpdate();
@@ -938,6 +1429,13 @@
     connectedCallback() {
       super.connectedCallback();
       updateState.cards.add(this);
+      recordsState.cards.add(this);
+      this._onLocation = () => this._applyLink();
+      window.addEventListener("location-changed", this._onLocation);
+      window.addEventListener("popstate", this._onLocation);
+      this._applyLink();
+      this._recordsTimer = window.setInterval(() => this._maybeFetchRecords(), 60 * 1e3);
+      this._maybeFetchRecords();
       this._observer = new ResizeObserver(([entry]) => {
         const compact = entry.contentRect.width < 1e3;
         if (compact !== this._compact) {
@@ -949,8 +1447,30 @@
     }
     disconnectedCallback() {
       updateState.cards.delete(this);
+      recordsState.cards.delete(this);
+      window.clearInterval(this._recordsTimer);
+      window.removeEventListener("location-changed", this._onLocation);
+      window.removeEventListener("popstate", this._onLocation);
       this._observer?.disconnect();
       super.disconnectedCallback();
+    }
+    // Follow ?somtoday_view= / ?somtoday_student= once per address, so tapping a
+    // notification opens the right tab while the tabs stay free to click after.
+    _applyLink() {
+      if (!this._config) return;
+      const search = window.location.search;
+      if (search === this._appliedLink) return;
+      const link = parseCardLink(search);
+      if (link.studentId !== null && !this._hass) return;
+      this._appliedLink = search;
+      if (link.view) this._view = link.view;
+      if (link.studentId !== null) {
+        const index = this._students().findIndex(
+          (student) => studentMatch(this._hass, student).studentId === link.studentId
+        );
+        if (index >= 0) this._studentIndex = index;
+      }
+      if (link.view || link.studentId !== null) this.requestUpdate();
     }
     _locale() {
       return this._hass?.locale?.language?.startsWith("nl") ? "nl" : "en";
@@ -983,31 +1503,84 @@
     _colors() {
       return this._config.subject_colors || {};
     }
+    // Every section toggle defaults to on.
+    _on(option) {
+      return this._config[option] !== false;
+    }
+    // A configured field wins; otherwise the sensor with the right
+    // translation_key on the child's device, so cards made before 0.4.0 pick
+    // the new sensors up without being edited.
+    _studentState(student, field) {
+      return this._state(
+        student[field] || entityForStudent(this._hass, student, STUDENT_ENTITY_KEYS[field])
+      );
+    }
+    _maybeFetchRecords() {
+      if (!this._hass || !this._config || !this.isConnected) return;
+      if (!RECORD_SECTIONS.some((key) => this._on(key))) return;
+      if (this._hass.services && !this._hass.services.somtoday?.get_records) return;
+      refreshRecords(this._hass);
+    }
+    _records(student) {
+      if (!recordsState.response) return EMPTY_RECORDS;
+      return recordsFromResponse(
+        recordsState.response,
+        studentMatch(this._hass, student)
+      );
+    }
+    // Views without anything to show for this child and this user are left out
+    // entirely: no access, a school that does not share it, a section turned off.
+    _availableViews(student) {
+      const records = this._records(student);
+      return VIEWS.filter((view) => {
+        if (view === "assignments") {
+          return this._on("show_assignments") && isEntityUsable(this._studentState(student, "assignments_entity"));
+        }
+        if (view === "grades") {
+          return (this._on("show_grades") || this._on("show_averages")) && records.grades !== null;
+        }
+        if (view === "absences") {
+          return this._on("show_absences") && records.absences !== null || this._on("show_measures") && activeMeasures(records.measures).length > 0;
+        }
+        if (view === "messages") return this._on("show_messages") && records.messages !== null;
+        return true;
+      });
+    }
+    // The chosen view, or the week while it is not (or no longer) available —
+    // for instance until the records have come in.
+    _effectiveView(student) {
+      return this._availableViews(student).includes(this._view) ? this._view : "week";
+    }
     render() {
       if (!this._config || !this._hass) return html``;
       const students = this._students();
       const student = this._student();
       const all = this._showingAll();
+      const views = this._availableViews(student);
+      const view = all ? this._view : this._effectiveView(student);
+      const records = this._records(student);
+      const schoolClass = this._on("show_school_class") ? this._studentState(student, "school_class_entity") : null;
+      const className = isEntityUsable(schoolClass) ? schoolClass.attributes?.class_name || schoolClass.state : "";
       return html`<ha-card>
       <div class="header">
         <ha-icon icon="mdi:school-outline"></ha-icon>
         <div class="heading">
           <h2>${this._config.title}</h2>
           <div class="subtitle">
-            ${all ? this._t("all_students") : student.name || this._t(this._view)}
+            ${all ? this._t("all_students") : [student.name || this._t(view), className ? `${this._t("class")} ${className}` : "", className ? schoolClass.attributes?.programme : ""].filter(Boolean).join(" \xB7 ")}
           </div>
         </div>
       </div>
       ${this._config.show_view_tabs !== false ? html`<div class="view-tabs">
-              ${VIEWS.map(
-        (view) => html`<button
-                    class="tab ${view === this._view ? "active" : ""}"
+              ${views.map(
+        (item) => html`<button
+                    class="tab ${item === view ? "active" : ""}"
                     @click=${() => {
-          this._view = view;
+          this._view = item;
           this.requestUpdate();
         }}
                   >
-                    ${this._t(view)}
+                    ${this._t(item)}${item === "messages" && records.unreadMessages > 0 ? html`<span class="unread-count">${records.unreadMessages}</span>` : ""}
                   </button>`
       )}
             </div>` : ""}
@@ -1016,8 +1589,10 @@
             <span>${this._t("update_available").replace("{version}", updateState.pending)}</span>
             <button class="tab active" @click=${() => window.location.reload()}>${this._t("reload")}</button>
           </div>` : ""}
+      ${this._renderNotices(student)}
+      ${all ? "" : this._renderInfoStrip(student)}
       <div class="content">
-        ${all ? this._renderAllStudents(students) : this._renderView(student)}
+        ${all ? this._renderAllStudents(students) : this._renderView(student, view)}
       </div>
       ${this._renderDialog()}
     </ha-card>`;
@@ -1057,13 +1632,196 @@
       )}
     </div>`;
     }
-    _renderView(student) {
-      if (this._view === "week") return this._renderWeek(student);
-      if (this._view === "day") return this._renderDay(student);
-      if (this._view === "tomorrow") return this._renderTomorrow(student);
-      if (this._view === "homework") return this._renderHomework(student);
-      if (this._view === "changes") return this._renderChanges(student);
+    _renderView(student, view = this._view) {
+      if (view === "week") return this._renderWeek(student);
+      if (view === "day") return this._renderDay(student);
+      if (view === "tomorrow") return this._renderTomorrow(student);
+      if (view === "homework") return this._renderHomework(student);
+      if (view === "changes") return this._renderChanges(student);
+      if (view === "assignments") return this._renderAssignments(student);
+      if (view === "grades") return this._renderGrades(student);
+      if (view === "absences") return this._renderAbsences(student);
+      if (view === "messages") return this._renderMessages(student);
       return this._renderTests(student);
+    }
+    // Somtoday's own nationwide notices — an outage, maintenance. They are the
+    // same for every child on the account, so one banner is enough.
+    _renderNotices(student) {
+      if (!this._on("show_announcements")) return "";
+      const state = this._studentState(student, "announcements_entity");
+      if (!isEntityUsable(state) || !(Number(state.state) > 0)) return "";
+      const items = (state.attributes?.announcements || []).filter(Boolean);
+      if (!items.length) return "";
+      const icons = { info: "mdi:information-outline", warning: "mdi:alert-outline", error: "mdi:alert-circle-outline", positive: "mdi:check-circle-outline" };
+      return html`<div class="notices" role="status">
+      ${items.map(
+        (item) => html`<div class="notice ${item.level || "info"}">
+          <ha-icon icon=${icons[item.level] || icons.info}></ha-icon>
+          <div><strong>${item.subject || this._t("notice")}</strong>${item.body ? html`<span>${item.body}</span>` : ""}</div>
+        </div>`
+      )}
+    </div>`;
+    }
+    // Holiday countdown and how far the school year is, on one quiet line.
+    _renderInfoStrip(student) {
+      const state = this._studentState(student, "next_holiday_entity");
+      if (!isEntityUsable(state)) return "";
+      const attrs = state.attributes || {};
+      const text = this._on("show_holidays") ? holidayText(attrs, TRANSLATIONS[this._locale()], this._locale()) : "";
+      const progress = this._on("show_school_year") ? schoolYearProgress(attrs) : null;
+      if (!text && progress === null) return "";
+      return html`<div class="info-strip">
+      ${text ? html`<span><ha-icon icon="mdi:beach"></ha-icon>${text}</span>` : ""}
+      ${progress !== null ? html`<span class="year-progress" title=${attrs.school_year?.name || ""}>
+            <small>${this._t("school_year")}</small>
+            <span class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow=${progress}><span style="width:${progress}%"></span></span>
+            <small>${progress}%</small>
+          </span>` : ""}
+    </div>`;
+    }
+    _renderAssignments(student) {
+      const state = this._studentState(student, "assignments_entity");
+      if (!isEntityUsable(state)) return this._empty(state ? "unavailable" : "no_assignments");
+      const items = sortAssignments(state.attributes?.assignments || []);
+      if (!items.length) return this._empty("no_assignments");
+      const locale = this._locale();
+      return html`<div class="list">
+      ${items.map((item) => {
+        const status = assignmentStatus(item.status);
+        const color = subjectColor(item.subject, this._colors());
+        return html`<div
+          class="item ${status}"
+          role="button"
+          tabindex="0"
+          style=${color && status !== "late" ? `border-left-color:${color}` : ""}
+          @click=${() => this._dialog = { type: "assignment", item }}
+          @keydown=${(event) => this._activate(event, { type: "assignment", item })}
+        >
+          <span class="item-head"
+            ><span>${item.subject || "\u2014"}</span
+            ><span class="status-chip ${status}">${this._t(`status_${status}`)}</span></span
+          >
+          ${item.topic ? html`<div>${item.topic}</div>` : ""}
+          ${item.description ? html`<div class="description">${item.description}</div>` : ""}
+          <div class="meta">
+            ${item.deadline ? html`<span>${this._t("deadline")}: ${formatDate(item.deadline, locale)} ${formatTime(item.deadline, locale)}</span>` : ""}
+            ${item.opens && status === "upcoming" ? html`<span>${this._t("opens")}: ${formatDate(item.opens, locale)} ${formatTime(item.opens, locale)}</span>` : ""}
+          </div>
+        </div>`;
+      })}
+    </div>`;
+    }
+    _renderGrades(student) {
+      const records = this._records(student);
+      const locale = this._locale();
+      const grades = this._on("show_grades") ? latestGrades(records.grades || [], 10) : [];
+      const averages = this._on("show_averages") ? records.averages || [] : [];
+      const overall = this._on("show_averages") ? records.overallAverage : null;
+      if (!grades.length && !averages.length && overall === null) return this._empty("no_grades");
+      return html`
+      ${grades.length ? html`<div class="section-title">${this._t("latest_grades")}</div>
+            <div class="list">
+              ${grades.map((grade) => {
+        const color = subjectColor(grade.subject || grade.subject_short, this._colors());
+        return html`<div class="record" style=${color ? `--subject-color:${color}` : ""}>
+                  <span class="result">${this._gradeCell(grade, locale, student)}</span>
+                  <div class="what">
+                    <div>${grade.subject || grade.subject_short || "\u2014"}</div>
+                    <div class="meta">
+                      ${grade.description ? html`<span>${grade.description}</span>` : ""}
+                      ${grade.resit ? html`<span class="badge">${this._t("resit")}</span>` : ""}
+                    </div>
+                  </div>
+                  <div class="when">
+                    <div>${grade.entered ? formatDate(grade.entered, locale) : ""}</div>
+                    ${grade.weight !== null && grade.weight !== void 0 && grade.weight !== "" ? html`<div>${this._t("weight")} ${grade.weight}×</div>` : ""}
+                  </div>
+                </div>`;
+      })}
+            </div>` : ""}
+      ${averages.length || overall !== null ? html`<div class="section-title">${this._t("averages")}</div>
+            <table class="averages">
+              ${overall !== null ? html`<tr class="overall"><td>${this._t("overall_average")}</td><td class=${overall < 5.5 ? "insufficient" : ""}>${formatGrade(null, overall, locale)}</td></tr>` : ""}
+              ${averages.map(
+        (average) => html`<tr>
+                  <td>${average.subject || average.subject_short || "\u2014"}</td>
+                  <td>${this._gradeCell(average, locale, student)}</td>
+                </tr>`
+      )}
+            </table>` : ""}
+    `;
+    }
+    _renderAbsences(student) {
+      const records = this._records(student);
+      const locale = this._locale();
+      const absences = this._on("show_absences") && records.absences !== null ? sortAbsences(records.absences) : null;
+      const measures = this._on("show_measures") ? activeMeasures(records.measures) : [];
+      return html`
+      ${absences !== null ? html`<div class="section-title">${this._t("absences")}</div>
+            ${absences.length ? html`<div class="list">
+                  ${absences.map((item) => {
+        const sameDay = String(item.start || "").slice(0, 10) === String(item.end || "").slice(0, 10);
+        return html`<div class="item change">
+                      <span class="item-head"
+                        ><span>${formatDate(item.start, locale)}${item.start && String(item.start).includes("T") ? ` ${formatTime(item.start, locale)}${item.end && sameDay ? `\u2013${formatTime(item.end, locale)}` : ""}` : ""}</span
+                        ><span class="kind-chip ${item.kind}">${this._t(absenceKindKey(item.kind))}</span></span
+                      >
+                      <div class="meta">
+                        ${item.period ? html`<span>${this._t("period")} ${item.period}</span>` : ""}
+                        ${item.subject ? html`<span>${item.subject}</span>` : ""}
+                        ${item.authorised ? html`<span>${this._t("authorised")}</span>` : ""}
+                        ${item.handled ? html`<span>${this._t("handled")}</span>` : ""}
+                      </div>
+                      ${item.description ? html`<div class="description">${item.description}</div>` : ""}
+                    </div>`;
+      })}
+                </div>` : this._empty("no_absences")}` : ""}
+      ${measures.length ? html`<div class="section-title">${this._t("measures")}</div>
+            <div class="list">
+              ${measures.map(
+        (item) => html`<div class="item change" style="--subject-color:var(--warning-color)">
+                  <span class="item-head"><span>${item.description || "\u2014"}</span><span class="count">${formatDate(item.date, locale)}</span></span>
+                  ${item.remarks ? html`<div class="description">${item.remarks}</div>` : ""}
+                </div>`
+      )}
+            </div>` : ""}
+    `;
+    }
+    _renderMessages(student) {
+      const messages = sortMessages(this._records(student).messages || []);
+      if (!messages.length) return this._empty("no_messages");
+      const locale = this._locale();
+      return html`<div class="list">
+      ${messages.map(
+        (message) => html`<details class="message ${message.unread ? "unread" : ""}">
+          <summary>
+            <span class="dot" title=${message.unread ? this._t("unread") : ""}></span>
+            <span class="subject">${message.subject || "\u2014"}${message.message_count > 1 ? ` (${message.message_count})` : ""}</span>
+            <span class="when">${formatDate(message.sent, locale)}</span>
+            <span class="sender">${message.sender || ""}${Array.isArray(message.attachments) && message.attachments.length ? html` · <ha-icon icon="mdi:paperclip"></ha-icon> ${message.attachments.length} ${this._t("attachments")}` : Number(message.attachments) > 0 ? ` \xB7 ${message.attachments} ${this._t("attachments")}` : ""}</span>
+          </summary>
+          ${message.body ? html`<div class="body">${message.body}</div>` : ""}
+        </details>`
+      )}
+    </div>`;
+    }
+    _activate(event, dialog) {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      this._dialog = dialog;
+    }
+    // Teacher-attached links open in a new tab; the click must not also open
+    // the item's dialog.
+    _renderLinks(links) {
+      const safe = (links || []).filter((link) => /^https?:\/\//.test(String(link?.url || "")));
+      if (!safe.length) return "";
+      return html`<div class="links">
+      ${safe.map(
+        (link) => html`<a href=${link.url} target="_blank" rel="noopener noreferrer" @click=${(event) => event.stopPropagation()} @keydown=${(event) => event.stopPropagation()}
+          ><ha-icon icon="mdi:open-in-new"></ha-icon>${link.title || link.url}</a
+        >`
+      )}
+    </div>`;
     }
     _renderWeek(student) {
       const state = this._weekState(student, this._weekOffset);
@@ -1105,7 +1863,7 @@
       const workItems = workState?.attributes?.items || [];
       const cells = LESSON_PERIOD_SLOTS.map(([period, start, end]) => `<tr><th>${period}<small>${start}\u2013${end}</small></th>${days.map((day) => {
         const lesson = (day.lessons || []).find((item) => Number(item.period_start ?? item.period) === period || String(item.start || "").slice(11, 16) === start);
-        return lesson ? `<td class="${lesson.cancelled ? "cancelled" : ""}"><strong>${escapeHtml(lesson.subject || lesson.subject_short || "")}</strong><small>${escapeHtml(lesson.teacher || "")}${lesson.location ? ` \xB7 ${escapeHtml(lesson.location)}` : ""}</small></td>` : "<td class=empty>Geen les</td>";
+        return lesson ? `<td class="${lesson.cancelled ? "cancelled" : ""}"><strong>${escapeHtml(lessonName(lesson))}</strong><small>${escapeHtml(lesson.teacher || "")}${lesson.location ? ` \xB7 ${escapeHtml(lesson.location)}` : ""}</small></td>` : "<td class=empty>Geen les</td>";
       }).join("")}</tr>`).join("");
       popup.document.write(`<!doctype html><html><head><title>${escapeHtml(this._config.title)} \u2013 ${escapeHtml(this._weekLabel())}</title><style>@page{size:landscape;margin:12mm}body{font:12px Arial;color:#111}h1{margin:0 0 4px}p{margin:0 0 14px;color:#555}table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{border:1px solid #999;padding:6px;vertical-align:top}thead th{background:#e8eef5}tbody th{width:70px;background:#f3f3f3}small{display:block;margin-top:3px;color:#555}.empty{color:#999;background:#fafafa}.cancelled{text-decoration:line-through;background:#ffe8e8}</style></head><body><h1>${escapeHtml(this._config.title)}</h1><p>${escapeHtml(student.name || "")} \xB7 ${escapeHtml(this._weekLabel())}</p><table><thead><tr><th>Uur</th>${days.map((day) => `<th>${escapeHtml(formatDate(day.date, this._locale()))}</th>`).join("")}</tr></thead><tbody>${cells}</tbody></table><script>window.onload=()=>{window.print()}<\/script></body></html>`);
       LESSON_PERIOD_SLOTS.forEach(([period, start], rowIndex) => {
@@ -1193,7 +1951,7 @@
         ><span class="count">${lessons.length}</span>
       </div>
       ${planner ? this._edgeButton(this._t("before_school"), date, lessons[0]?.start, true, planner) : ""}
-      ${timeline.map((entry) => entry.type === "lesson" ? this._lessonButton(entry.item, currentState, student) : entry.type === "empty_lesson" ? this._emptyLessonButton(entry, planner) : entry.type === "appointment" ? this._appointmentButton(entry.item, planner) : this._gapButton(entry, planner))}
+      ${timeline.map((entry) => entry.type === "lesson" ? this._lessonButton(entry.item, currentState, student, entry) : entry.type === "empty_lesson" ? this._emptyLessonButton(entry, planner) : entry.type === "appointment" ? this._appointmentButton(entry.item, planner) : this._gapButton(entry, planner))}
       ${missing.map((lesson) => this._lessonButton({ ...lesson, _missing: true }))}
       ${planner ? this._edgeButton(this._t("after_school"), date, lessons.at(-1)?.end, false, planner) : ""}
     </section>`;
@@ -1243,7 +2001,7 @@
     _notify(message) {
       this.dispatchEvent(new CustomEvent("hass-notification", { detail: { message }, bubbles: true, composed: true }));
     }
-    _lessonButton(lesson, currentState, student = this._student()) {
+    _lessonButton(lesson, currentState, student = this._student(), entry = null) {
       const deviation = lesson._missing ? "missing" : lessonDeviation(lesson);
       const current = currentState?.attributes?.start && currentState.attributes.start === lesson.start;
       const color = subjectColor(
@@ -1269,12 +2027,12 @@
       @click=${() => this._dialog = { type: "lesson", item: lesson, deviation }}
     >
       <span class="lesson-head"
-        ><span>${lesson.subject || lesson.subject_short || "\u2014"}</span
+        ><span>${lessonName(lesson)}</span
         >${deviation ? html`<span class="badge">${this._t(deviation)}</span>` : ""}</span
       >
       <span class="meta"
         ><span
-          >${lesson.period || lesson.period_start ? `${this._t("period")} ${lesson.period || lesson.period_start}` : ""}</span
+          >${this._periodLabel(lesson, entry)}</span
         ><span
           >${lesson.start ? `${formatTime(lesson.start, this._locale())}\u2013${formatTime(lesson.end, this._locale())}` : `${lesson.start_time || ""}\u2013${lesson.end_time || ""}`}</span
         ><span>${lesson.location || ""}</span><span>${lesson.teacher || ""}</span></span
@@ -1284,6 +2042,23 @@
         this._dialog = { type: workKind(item.type), item };
       }}>${this._t(workKind(item.type))}</span>`)}</span>` : ""}
     </button>`;
+    }
+    _periodLabel(lesson, entry) {
+      const first = Number(lesson.period || lesson.period_start) || entry?.period || null;
+      if (!first) return "";
+      const last = Number(lesson.period_end) || entry?.period_end || first;
+      return `${this._t("period")} ${last > first ? `${first}\u2013${last}` : first}`;
+    }
+    _gradeLevel(student = this._student()) {
+      return student?.grade_level || this._config.grade_level || "both_main_first";
+    }
+    _gradeCell(item, locale, student) {
+      const { primary, secondary } = gradeLevels(item, this._gradeLevel(student));
+      return html`<span class="grade-main ${primary.sufficient === false ? "insufficient" : ""}"
+        >${primary.level && secondary ? html`<small class="level">${primary.level}</small>` : ""}${formatGrade(primary.result, primary.value, locale)}</span
+      >${secondary ? html`<small class="grade-other ${secondary.sufficient === false ? "insufficient" : ""}"
+            >${secondary.level ? `${secondary.level} ` : ""}${formatGrade(secondary.result, secondary.value, locale)}</small
+          >` : ""}`;
     }
     _renderHomework(student) {
       const state = this._state(student.homework_entity);
@@ -1323,7 +2098,7 @@
       const color = subjectColor(change.subject || change.subject_short, this._colors());
       return html`<div class="item change ${change.type}" style=${color ? `--subject-color:${color}` : ""}>
       <span class="item-head"
-        ><span>${change.subject || change.subject_short || "\u2014"}</span
+        ><span>${lessonName(change)}</span
         ><span class="badge">${this._t(`change_${change.type}`)}</span></span
       >
       <div class="meta">
@@ -1337,10 +2112,15 @@
       </div>
     </div>`;
     }
+    // A div acting as a button rather than a <button>, because a homework item
+    // can carry links and a link inside a button does not work in every browser.
     _itemButton(item, type) {
-      return html`<button
+      return html`<div
       class="item ${type === "test" ? "urgent" : ""}"
+      role="button"
+      tabindex="0"
       @click=${() => this._dialog = { type, item }}
+      @keydown=${(event) => this._activate(event, { type, item })}
     >
       <span class="item-head"
         ><span>${item.subject || "\u2014"}</span
@@ -1350,8 +2130,10 @@
       ${item.description ? html`<div class="description">${item.description}</div>` : ""}
       <div class="meta">
         ${item.due ? html`<span>${this._t("due")}: ${formatDate(item.due, this._locale())} ${formatTime(item.due, this._locale())}</span>` : ""}
+        ${item.time_indication ? html`<span><ha-icon icon="mdi:timer-outline"></ha-icon> ${item.time_indication}</span>` : ""}
       </div>
-    </button>`;
+      ${this._renderLinks(item.links)}
+    </div>`;
     }
     _empty(key) {
       return html`<div class=${key === "unavailable" ? "error" : "empty"}>
@@ -1367,8 +2149,17 @@
       const rows = [
         [
           this._t("status"),
-          deviation ? this._t(deviation) : item.status || item.type
+          deviation ? this._t(deviation) : this._dialog.type === "assignment" ? this._t(`status_${assignmentStatus(item.status)}`) : item.status || item.type
         ],
+        [
+          this._t("deadline"),
+          item.deadline ? `${formatDate(item.deadline, this._locale())} ${formatTime(item.deadline, this._locale())}` : null
+        ],
+        [
+          this._t("opens"),
+          item.opens ? `${formatDate(item.opens, this._locale())} ${formatTime(item.opens, this._locale())}` : null
+        ],
+        [this._t("time_indication"), item.time_indication],
         [this._t("period"), item.period || item.period_start],
         [this._t("teacher"), item.teacher],
         [this._t("location"), item.location],
@@ -1394,6 +2185,7 @@
                 <dd>${value}</dd>`
       )}
         </dl>
+        ${this._renderLinks(item.links)}
       </div>
       <ha-button slot="primaryAction" dialogAction="close"
         >${this._t("close")}</ha-button
@@ -1452,9 +2244,33 @@
       font-size: 0.85rem;
       margin: -4px 0 0;
     }
+    .toggles {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 4px 12px;
+    }
   `;
     setConfig(config) {
       this._config = { ...config, students: normalizeStudents(config) };
+    }
+    /**
+     * A dropdown for both generations of ha-select: up to HA 2026.9 it was an
+     * mwc-select with <mwc-list-item> children; from 2026.10 it renders its
+     * `options` and reports the choice in `event.detail.value`, ignoring the
+     * children entirely, so the old markup silently stopped working.
+     */
+    _select(label, key, value, options) {
+      return html`<ha-select
+      .label=${label}
+      .value=${value}
+      .options=${options}
+      @selected=${(event) => {
+        const chosen = event.detail?.value ?? event.target.value;
+        if (chosen !== void 0 && chosen !== null && chosen !== "" && chosen !== value) this._set(key, chosen);
+      }}
+      @closed=${(event) => event.stopPropagation()}
+      >${options.map((option) => html`<mwc-list-item .value=${option.value}>${option.label}</mwc-list-item>`)}</ha-select
+    >`;
     }
     _set(key, value) {
       this._config = { ...this._config, [key]: value };
@@ -1489,7 +2305,24 @@
         ["planner_entity", "Planner sensor (optional)"],
         ["next_week_entity", "Next week sensor"],
         ["upcoming_work_entity", "Upcoming schoolwork sensor"],
-        ["changes_entity", "Schedule changes sensor"]
+        ["changes_entity", "Schedule changes sensor"],
+        ["next_holiday_entity", "Next holiday sensor"],
+        ["school_class_entity", "Class sensor"],
+        ["assignments_entity", "Assignments sensor"],
+        ["announcements_entity", "Somtoday notices sensor"]
+      ];
+      const strings = TRANSLATIONS[this.hass?.locale?.language?.startsWith("nl") ? "nl" : "en"];
+      const sections = [
+        "show_holidays",
+        "show_school_year",
+        "show_school_class",
+        "show_announcements",
+        "show_assignments",
+        "show_grades",
+        "show_averages",
+        "show_absences",
+        "show_measures",
+        "show_messages"
       ];
       const students = this._config.students || [];
       const several = students.length > 1;
@@ -1500,27 +2333,33 @@
         .value=${this._config.title || "Somtoday"}
         @change=${(event) => this._set("title", event.target.value)}
       ></ha-textfield
-      ><ha-select
-        label="Default view"
-        .value=${this._config.default_view || "week"}
-        @selected=${(event) => this._set("default_view", event.target.value)}
-        >${VIEWS.map((view) => html`<mwc-list-item .value=${view}>${view}</mwc-list-item>`)}</ha-select
-      >${several ? html`<ha-formfield label="Show all children side by side on Today and Tomorrow">
+      >${this._select("Default view", "default_view", this._config.default_view || "week", VIEWS.map((view) => ({ value: view, label: view })))}${this._select(
+        strings.editor_grade_level,
+        "grade_level",
+        this._config.grade_level || "both_main_first",
+        GRADE_LEVELS.map((level) => ({ value: level, label: strings[`grade_level_${level}`] }))
+      )}${several ? html`<ha-formfield label="Show all children side by side on Today and Tomorrow">
               <ha-switch
                 .checked=${this._config.show_all_students === true}
                 @change=${(event) => this._set("show_all_students", event.target.checked)}
               ></ha-switch>
             </ha-formfield>
-            <ha-select
-              label="Order of the children"
-              .value=${manual ? "manual" : "name"}
-              @selected=${(event) => this._set("student_order", event.target.value)}
-              @closed=${(event) => event.stopPropagation()}
-            >
-              <mwc-list-item value="manual">Own order</mwc-list-item>
-              <mwc-list-item value="name">Alphabetical</mwc-list-item>
-            </ha-select>
-            ${manual ? html`<p class="help">Use the arrows next to each child to change the order.</p>` : ""}` : ""}${students.map(
+            ${this._select("Order of the children", "student_order", manual ? "manual" : "name", [
+        { value: "manual", label: "Own order" },
+        { value: "name", label: "Alphabetical" }
+      ])}
+            ${manual ? html`<p class="help">Use the arrows next to each child to change the order.</p>` : ""}` : ""}<h3>${strings.editor_sections}</h3>
+      <div class="toggles">
+        ${sections.map(
+        (key) => html`<ha-formfield .label=${strings[`editor_${key}`]}>
+            <ha-switch
+              .checked=${this._config[key] !== false}
+              @change=${(event) => this._set(key, event.target.checked)}
+            ></ha-switch>
+          </ha-formfield>`
+      )}
+      </div>
+      <p class="help">${strings.editor_records_hint}</p>${students.map(
         (student, index) => html`<div class="student">
             <div class="student-head">
               <h3>${student.name || `Student ${index + 1}`}</h3>
