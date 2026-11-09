@@ -664,7 +664,12 @@ class SomtodayCard extends LitElement {
     const automaticWeekIds = Object.values(value?.states || {})
       .filter((state) => Number.isInteger(state.attributes?.week_offset))
       .map((state) => state.entity_id);
-    const relevant = [...new Set([...ids, ...automaticWeekIds])]
+    // Every Somtoday entity counts, so the holiday, class, assignment and
+    // notice sensors (found through the device, not the config) redraw too.
+    const integrationIds = Object.values(value?.entities || {})
+      .filter((entry) => entry.platform === "somtoday")
+      .map((entry) => entry.entity_id);
+    const relevant = [...new Set([...ids, ...automaticWeekIds, ...integrationIds])]
       .map((id) => `${id}:${value?.states?.[id]?.last_updated || ""}`)
       .join("|");
     this._hass = value;
