@@ -1616,6 +1616,26 @@ class SomtodayCardEditor extends LitElement {
   setConfig(config) {
     this._config = { ...config, students: normalizeStudents(config) };
   }
+  /**
+   * A dropdown for both generations of ha-select: up to HA 2026.9 it was an
+   * mwc-select with <mwc-list-item> children; from 2026.10 it renders its
+   * `options` and reports the choice in `event.detail.value`, ignoring the
+   * children entirely, so the old markup silently stopped working.
+   */
+  _select(label, key, value, options) {
+    return html`<ha-select
+      .label=${label}
+      .value=${value}
+      .options=${options}
+      @selected=${(event) => {
+        const chosen = event.detail?.value ?? event.target.value;
+        if (chosen !== undefined && chosen !== null && chosen !== "" && chosen !== value) this._set(key, chosen);
+      }}
+      @closed=${(event) => event.stopPropagation()}
+      >${options.map((option) => html`<mwc-list-item .value=${option.value}>${option.label}</mwc-list-item>`)}</ha-select
+    >`;
+  }
+
   _set(key, value) {
     this._config = { ...this._config, [key]: value };
     fireConfigChanged(this, this._config);
@@ -1677,33 +1697,22 @@ class SomtodayCardEditor extends LitElement {
         .value=${this._config.title || "Somtoday"}
         @change=${(event) => this._set("title", event.target.value)}
       ></ha-textfield
-      ><ha-select
-        label="Default view"
-        .value=${this._config.default_view || "week"}
-        @selected=${(event) => this._set("default_view", event.target.value)}
-        >${VIEWS.map((view) => html`<mwc-list-item .value=${view}>${view}</mwc-list-item>`)}</ha-select
-      ><ha-select
-        .label=${strings.editor_grade_level}
-        .value=${this._config.grade_level || "both_main_first"}
-        @selected=${(event) => this._set("grade_level", event.target.value)}
-        @closed=${(event) => event.stopPropagation()}
-        >${GRADE_LEVELS.map((level) => html`<mwc-list-item .value=${level}>${strings[`grade_level_${level}`]}</mwc-list-item>`)}</ha-select
-      >${several
+      >${this._select("Default view", "default_view", this._config.default_view || "week", VIEWS.map((view) => ({ value: view, label: view })))}${this._select(
+        strings.editor_grade_level,
+        "grade_level",
+        this._config.grade_level || "both_main_first",
+        GRADE_LEVELS.map((level) => ({ value: level, label: strings[`grade_level_${level}`] })),
+      )}${several
         ? html`<ha-formfield label="Show all children side by side on Today and Tomorrow">
               <ha-switch
                 .checked=${this._config.show_all_students === true}
                 @change=${(event) => this._set("show_all_students", event.target.checked)}
               ></ha-switch>
             </ha-formfield>
-            <ha-select
-              label="Order of the children"
-              .value=${manual ? "manual" : "name"}
-              @selected=${(event) => this._set("student_order", event.target.value)}
-              @closed=${(event) => event.stopPropagation()}
-            >
-              <mwc-list-item value="manual">Own order</mwc-list-item>
-              <mwc-list-item value="name">Alphabetical</mwc-list-item>
-            </ha-select>
+            ${this._select("Order of the children", "student_order", manual ? "manual" : "name", [
+              { value: "manual", label: "Own order" },
+              { value: "name", label: "Alphabetical" },
+            ])}
             ${manual ? html`<p class="help">Use the arrows next to each child to change the order.</p>` : ""}`
         : ""}<h3>${strings.editor_sections}</h3>
       <div class="toggles">

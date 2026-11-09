@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0-beta.4
+
+### Fixed
+
+- **Dropdowns in the card editor work again on Home Assistant 2026.10+.**
+  The new `ha-select` ignores `<mwc-list-item>` children and reports the choice
+  in `event.detail.value`, so _Default view_, _Grade level_ and _Order of the
+  children_ silently kept their old value. The editor now passes `options` and
+  reads the new event, and still works on older versions.
+
 ## 0.4.0-beta.3
 
 Grade levels need Somtoday 0.2.0-beta.2 or newer.
