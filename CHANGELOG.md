@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.4.0
+## 0.4.0-beta.1
 
-Needs Somtoday 0.2.0 for the new parts; with an older integration the card
+Needs Somtoday 0.2.0-beta.1 or newer for the new parts; with an older integration the card
 works as before and simply leaves them out.
 
 ### Added

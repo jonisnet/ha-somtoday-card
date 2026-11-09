@@ -1,4 +1,4 @@
-/* Somtoday Card v0.4.0 */
+/* Somtoday Card v0.4.0-beta.1 */
 (() => {
   // src/helpers.js
   var VIEWS = [
@@ -774,7 +774,7 @@
   };
 
   // src/somtoday-card.js
-  var VERSION = true ? "0.4.0" : "dev";
+  var VERSION = true ? "0.4.0-beta.1" : "dev";
   var DAY_VIEWS = ["day", "tomorrow", "changes"];
   var ALL_STUDENTS = -1;
   var getLit = () => {
