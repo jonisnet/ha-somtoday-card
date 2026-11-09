@@ -1,4 +1,4 @@
-/* Somtoday Card v0.3.1 */
+/* Somtoday Card v0.3.2 */
 (() => {
   // src/helpers.js
   var VIEWS = [
@@ -267,6 +267,18 @@
       return subject && String(item.subject || "").toLowerCase() === subject;
     });
   }
+  function workKind(type) {
+    if (type === "homework") return "homework";
+    if (type === "test" || type === "large_test") return "test";
+    if (type === "lesson_material") return "lesson_material";
+    return "other";
+  }
+  var WORK_KIND_COLORS = {
+    homework: { color: "#176b35", background: "#b9f6ca" },
+    test: { color: "#8a3f00", background: "#ffd5a6" },
+    lesson_material: { color: "#0b4f8a", background: "#cfe5ff" },
+    other: { color: "#444444", background: "#e0e0e0" }
+  };
   function sortHomework(items = []) {
     return [...items].sort((a, b) => {
       if (!a?.due) return 1;
@@ -322,6 +334,8 @@
       all_students: "All children",
       student: "Child",
       test: "Test",
+      lesson_material: "Lesson material",
+      other: "Other",
       schoolwork: "Schoolwork",
       no_data: "No schedule data available",
       no_lesson: "No lesson",
@@ -388,6 +402,8 @@
       all_students: "Alle kinderen",
       student: "Kind",
       test: "Toets",
+      lesson_material: "Lesstof",
+      other: "Overig",
       schoolwork: "Schoolwerk",
       no_data: "Geen roostergegevens beschikbaar",
       no_lesson: "Geen les",
@@ -442,7 +458,7 @@
   };
 
   // src/somtoday-card.js
-  var VERSION = true ? "0.3.1" : "dev";
+  var VERSION = true ? "0.3.2" : "dev";
   var DAY_VIEWS = ["day", "tomorrow", "changes"];
   var ALL_STUDENTS = -1;
   var getLit = () => {
@@ -766,6 +782,8 @@
     .work-chip { border-radius: 999px; padding: 3px 7px; font-size: .7rem; font-weight: 700; cursor: pointer; }
     .work-chip.homework { color: #176b35; background: #b9f6ca; }
     .work-chip.test, .work-chip.large_test { color: #8a3f00; background: #ffd5a6; }
+    .work-chip.lesson_material { color: #0b4f8a; background: #cfe5ff; }
+    .work-chip.other { color: #444444; background: #e0e0e0; }
     .lesson-head,
     .item-head {
       display: flex;
@@ -1095,14 +1113,14 @@
           const lesson = (day.lessons || []).find((item) => Number(item.period_start ?? item.period) === period || String(item.start || "").slice(11, 16) === start);
           const cell = popup.document.querySelectorAll("tbody tr")[rowIndex]?.children[dayIndex + 1];
           for (const item of lesson ? workForLesson(lesson, workItems) : []) {
-            cell?.insertAdjacentHTML("beforeend", `<span style="display:inline-block;margin:5px 4px 0 0;padding:2px 6px;border-radius:10px;font-size:10px;font-weight:bold;color:${item.type === "homework" ? "#176b35" : "#8a3f00"};background:${item.type === "homework" ? "#b9f6ca" : "#ffd5a6"}">${escapeHtml(item.type === "homework" ? this._t("homework") : this._t("test"))}</span>`);
+            cell?.insertAdjacentHTML("beforeend", `<span style="display:inline-block;margin:5px 4px 0 0;padding:2px 6px;border-radius:10px;font-size:10px;font-weight:bold;color:${WORK_KIND_COLORS[workKind(item.type)].color};background:${WORK_KIND_COLORS[workKind(item.type)].background}">${escapeHtml(this._t(workKind(item.type)))}</span>`);
           }
         });
       });
       const visibleDates = new Set(days.map((day) => day.date));
       const printWork = workItems.filter((item) => visibleDates.has(String(item.due || "").slice(0, 10)));
       if (printWork.length) {
-        popup.document.body.insertAdjacentHTML("beforeend", `<section style="margin-top:12px"><h2 style="font-size:14px;margin:0 0 6px">${escapeHtml(this._t("schoolwork"))}</h2>${printWork.map((item) => `<span style="display:inline-block;margin:0 6px 5px 0;padding:4px 8px;border-radius:12px;font-weight:bold;color:${item.type === "homework" ? "#176b35" : "#8a3f00"};background:${item.type === "homework" ? "#b9f6ca" : "#ffd5a6"}">${escapeHtml(item.type === "homework" ? this._t("homework") : this._t("test"))}: ${escapeHtml(item.subject || "")} \xB7 ${escapeHtml(formatDate(item.due, this._locale()))} ${escapeHtml(formatTime(item.due, this._locale()))}</span>`).join("")}</section>`);
+        popup.document.body.insertAdjacentHTML("beforeend", `<section style="margin-top:12px"><h2 style="font-size:14px;margin:0 0 6px">${escapeHtml(this._t("schoolwork"))}</h2>${printWork.map((item) => `<span style="display:inline-block;margin:0 6px 5px 0;padding:4px 8px;border-radius:12px;font-weight:bold;color:${WORK_KIND_COLORS[workKind(item.type)].color};background:${WORK_KIND_COLORS[workKind(item.type)].background}">${escapeHtml(this._t(workKind(item.type)))}: ${escapeHtml(item.subject || "")} \xB7 ${escapeHtml(formatDate(item.due, this._locale()))} ${escapeHtml(formatTime(item.due, this._locale()))}</span>`).join("")}</section>`);
       }
       popup.document.close();
     }
@@ -1261,10 +1279,10 @@
           >${lesson.start ? `${formatTime(lesson.start, this._locale())}\u2013${formatTime(lesson.end, this._locale())}` : `${lesson.start_time || ""}\u2013${lesson.end_time || ""}`}</span
         ><span>${lesson.location || ""}</span><span>${lesson.teacher || ""}</span></span
       >
-      ${work.length ? html`<span class="work-chips">${work.map((item) => html`<span role="button" class="work-chip ${item.type}" @click=${(event) => {
+      ${work.length ? html`<span class="work-chips">${work.map((item) => html`<span role="button" class="work-chip ${workKind(item.type)}" @click=${(event) => {
         event.stopPropagation();
-        this._dialog = { type: item.type === "homework" ? "homework" : "test", item };
-      }}>${item.type === "homework" ? this._t("homework") : this._t("test")}</span>`)}</span>` : ""}
+        this._dialog = { type: workKind(item.type), item };
+      }}>${this._t(workKind(item.type))}</span>`)}</span>` : ""}
     </button>`;
     }
     _renderHomework(student) {
@@ -1326,7 +1344,7 @@
     >
       <span class="item-head"
         ><span>${item.subject || "\u2014"}</span
-        ><span class="badge">${item.type || type}</span></span
+        ><span class="badge">${item.type ? this._t(workKind(item.type)) : type}</span></span
       >
       <div>${item.topic || ""}</div>
       ${item.description ? html`<div class="description">${item.description}</div>` : ""}
