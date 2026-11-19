@@ -1,7 +1,10 @@
 /* eslint-disable no-useless-escape -- print HTML must escape its closing script tag */
 import {
   VIEWS,
+  GRADE_LEVELS,
   buildSchoolDayTimeline,
+  gradeLevels,
+  lessonName,
   LESSON_PERIOD_SLOTS,
   buildStubConfig,
   bundleVersion,
@@ -21,6 +24,23 @@ import {
   workForLesson,
   workKind,
   WORK_KIND_COLORS,
+  absenceKindKey,
+  activeMeasures,
+  assignmentStatus,
+  EMPTY_RECORDS,
+  entityForStudent,
+  fetchRecords,
+  formatGrade,
+  holidayText,
+  latestGrades,
+  recordsFromResponse,
+  schoolYearProgress,
+  sortAbsences,
+  sortAssignments,
+  sortMessages,
+  STUDENT_ENTITY_KEYS,
+  studentMatch,
+  parseCardLink,
 } from "./helpers.js";
 import { TRANSLATIONS } from "./translations.js";
 
@@ -120,6 +140,65 @@ async function checkForNewerCard(hass) {
   } finally {
     updateState.running = false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Confidential records
+// ---------------------------------------------------------------------------
+// Grades, absences, measures and messages are never entity states: anyone
+// signed in to Home Assistant could read those. They come from the
+// somtoday.get_records service, which checks the calling user. The response is
+// kept in this module's memory only — never localStorage or sessionStorage —
+// shared by every card on the page, refreshed every fifteen minutes while the
+// page is visible and when it comes back into view. Nothing of it is logged.
+
+const RECORDS_INTERVAL = 15 * 60 * 1000;
+const RECORDS_ON_RETURN = 60 * 1000;
+const RECORD_SECTIONS = [
+  "show_grades",
+  "show_averages",
+  "show_absences",
+  "show_measures",
+  "show_messages",
+];
+const recordsState = {
+  at: 0,
+  user: null,
+  running: false,
+  stale: false,
+  response: null,
+  cards: new Set(),
+};
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  if (Date.now() - recordsState.at >= RECORDS_ON_RETURN) recordsState.stale = true;
+  for (const card of recordsState.cards) card._maybeFetchRecords();
+});
+
+async function refreshRecords(hass) {
+  const user = hass.user?.id || null;
+  if (user !== recordsState.user) {
+    // Someone else signed in on this page: drop what the previous user saw.
+    recordsState.user = user;
+    recordsState.response = null;
+    recordsState.at = 0;
+  }
+  if (recordsState.running || document.visibilityState === "hidden") return;
+  if (!recordsState.stale && Date.now() - recordsState.at < RECORDS_INTERVAL) return;
+  recordsState.running = true;
+  recordsState.stale = false;
+  recordsState.at = Date.now();
+  try {
+    const response = await fetchRecords(hass);
+    if (recordsState.user === user) recordsState.response = response;
+  } catch {
+    // No access, an older integration, a lost connection: the sections stay
+    // hidden. Deliberately silent, so nothing confidential ends up in a log.
+  } finally {
+    recordsState.running = false;
+  }
+  for (const card of recordsState.cards) card.requestUpdate();
 }
 
 function fireConfigChanged(element, config) {
@@ -309,6 +388,7 @@ class SomtodayCard extends LitElement {
     }
     .lesson,
     .item {
+      box-sizing: border-box;
       width: 100%;
       text-align: left;
       border: 0;
@@ -468,6 +548,61 @@ class SomtodayCard extends LitElement {
       display: block;
       margin: 0 auto 8px;
     }
+    .info-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin: 10px 14px 0; font-size: 0.85rem; }
+    .info-strip > span { display: inline-flex; align-items: center; gap: 6px; }
+    .info-strip ha-icon { --mdc-icon-size: 18px; color: var(--secondary-text-color); }
+    .year-progress { flex: 1 1 180px; min-width: 140px; }
+    .year-progress .bar { flex: 1; height: 6px; border-radius: 999px; overflow: hidden; background: color-mix(in srgb, var(--primary-text-color) 12%, transparent); }
+    .year-progress .bar > span { display: block; height: 100%; border-radius: inherit; background: var(--primary-color); }
+    .year-progress small { color: var(--secondary-text-color); white-space: nowrap; }
+    .notices { display: grid; gap: 6px; margin: 10px 14px 0; }
+    .notice { --notice-color: var(--info-color, var(--primary-color)); display: flex; gap: 8px; padding: 8px 10px; border-radius: 10px; font-size: 0.85rem; border-left: 4px solid var(--notice-color); background: color-mix(in srgb, var(--notice-color) 14%, transparent); }
+    .notice.warning { --notice-color: var(--warning-color); }
+    .notice.error { --notice-color: var(--error-color); }
+    .notice.positive { --notice-color: var(--success-color); }
+    .notice ha-icon { --mdc-icon-size: 18px; color: var(--notice-color); flex: none; }
+    .notice strong { display: block; }
+    .status-chip { border-radius: 999px; padding: 2px 7px; font-size: 0.7rem; font-weight: 700; white-space: nowrap; }
+    .status-chip.late { color: #8c1d18; background: #ffd6d2; }
+    .status-chip.open { color: #0b4f8a; background: #cfe5ff; }
+    .status-chip.upcoming { color: #444444; background: #e0e0e0; }
+    .status-chip.handed_in { color: #176b35; background: #b9f6ca; }
+    .item.late { border-left-color: var(--error-color); }
+    .item.handed_in { opacity: 0.7; }
+    .links { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 6px; font-size: 0.8rem; }
+    .links a { color: var(--primary-color); text-decoration: none; display: inline-flex; align-items: center; gap: 3px; overflow-wrap: anywhere; }
+    .links a:hover { text-decoration: underline; }
+    .links ha-icon, .meta ha-icon, .message ha-icon { --mdc-icon-size: 14px; }
+    .section-title { margin: 14px 2px 8px; font-size: 0.95rem; font-weight: 600; }
+    .section-title:first-child { margin-top: 0; }
+    .record { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 4px 12px; padding: 8px 10px; border-radius: 9px; border-left: 4px solid var(--subject-color, var(--primary-color)); background: color-mix(in srgb, var(--subject-color, var(--primary-color)) 8%, var(--card-background-color)); }
+    .record .result { min-width: 2.6em; text-align: center; font-size: 1.15rem; font-weight: 700; display: flex; flex-direction: column; align-items: center; line-height: 1.15; }
+    .grade-main .level { font-size: 0.62rem; font-weight: 700; margin-right: 3px; opacity: .75; vertical-align: middle; }
+    .grade-other { display: block; font-size: 0.68rem; font-weight: 600; color: var(--secondary-text-color); }
+    .averages .grade-other { display: inline; margin-left: 6px; }
+    .insufficient { color: var(--error-color); }
+    .record .what { min-width: 0; }
+    .record .what > div:first-child { font-weight: 600; overflow-wrap: anywhere; }
+    .record .when { text-align: right; color: var(--secondary-text-color); font-size: 0.78rem; white-space: nowrap; }
+    .averages { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+    .averages td { padding: 6px 4px; border-bottom: 1px solid var(--divider-color); }
+    .averages td:last-child { text-align: right; font-weight: 600; white-space: nowrap; }
+    .averages tr.overall td { font-weight: 700; border-bottom-width: 2px; }
+    .kind-chip { border-radius: 999px; padding: 2px 7px; font-size: 0.7rem; font-weight: 700; white-space: nowrap; color: var(--primary-text-color); background: color-mix(in srgb, var(--warning-color) 22%, transparent); }
+    .kind-chip.unauthorised_absence, .kind-chip.removed_from_class { background: color-mix(in srgb, var(--error-color) 22%, transparent); }
+    .kind-chip.authorised_absence { background: color-mix(in srgb, var(--success-color, #43a047) 22%, transparent); }
+    details.message { border-radius: 9px; border-left: 4px solid var(--divider-color); background: color-mix(in srgb, var(--primary-color) 5%, var(--card-background-color)); }
+    details.message.unread { border-left-color: var(--primary-color); }
+    details.message summary { list-style: none; cursor: pointer; padding: 8px 10px; display: grid; grid-template-columns: auto 1fr auto; gap: 2px 10px; align-items: center; }
+    details.message summary::-webkit-details-marker { display: none; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: transparent; }
+    .unread .dot { background: var(--primary-color); }
+    .message .subject { font-weight: 600; overflow-wrap: anywhere; }
+    .unread .subject { font-weight: 700; }
+    .message .sender { grid-column: 2; color: var(--secondary-text-color); font-size: 0.78rem; }
+    .message .when { grid-row: 1; grid-column: 3; color: var(--secondary-text-color); font-size: 0.78rem; white-space: nowrap; }
+    .message .body { padding: 0 12px 12px 28px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.88rem; }
+    .tab .unread-count { display: inline-block; min-width: 1.3em; margin-left: 4px; padding: 0 4px; border-radius: 999px; font-size: 0.72rem; background: var(--error-color); color: white; }
     ha-dialog {
       --mdc-dialog-min-width: min(520px, calc(100vw - 32px));
       --mdc-dialog-max-width: 680px;
@@ -536,11 +671,18 @@ class SomtodayCard extends LitElement {
     const automaticWeekIds = Object.values(value?.states || {})
       .filter((state) => Number.isInteger(state.attributes?.week_offset))
       .map((state) => state.entity_id);
-    const relevant = [...new Set([...ids, ...automaticWeekIds])]
+    // Every Somtoday entity counts, so the holiday, class, assignment and
+    // notice sensors (found through the device, not the config) redraw too.
+    const integrationIds = Object.values(value?.entities || {})
+      .filter((entry) => entry.platform === "somtoday")
+      .map((entry) => entry.entity_id);
+    const relevant = [...new Set([...ids, ...automaticWeekIds, ...integrationIds])]
       .map((id) => `${id}:${value?.states?.[id]?.last_updated || ""}`)
       .join("|");
     this._hass = value;
     if (value) checkForNewerCard(value);
+    if (value) this._maybeFetchRecords();
+    if (value && this.isConnected) this._applyLink();
     if (relevant !== this._lastRelevant) {
       this._lastRelevant = relevant;
       this.requestUpdate();
@@ -553,6 +695,14 @@ class SomtodayCard extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     updateState.cards.add(this);
+    recordsState.cards.add(this);
+    this._onLocation = () => this._applyLink();
+    window.addEventListener("location-changed", this._onLocation);
+    window.addEventListener("popstate", this._onLocation);
+    this._applyLink();
+    // A quiet dashboard may not get a new hass object for a while.
+    this._recordsTimer = window.setInterval(() => this._maybeFetchRecords(), 60 * 1000);
+    this._maybeFetchRecords();
     this._observer = new ResizeObserver(([entry]) => {
       const compact = entry.contentRect.width < 1000;
       if (compact !== this._compact) {
@@ -564,8 +714,31 @@ class SomtodayCard extends LitElement {
   }
   disconnectedCallback() {
     updateState.cards.delete(this);
+    recordsState.cards.delete(this);
+    window.clearInterval(this._recordsTimer);
+    window.removeEventListener("location-changed", this._onLocation);
+    window.removeEventListener("popstate", this._onLocation);
     this._observer?.disconnect();
     super.disconnectedCallback();
+  }
+
+  // Follow ?somtoday_view= / ?somtoday_student= once per address, so tapping a
+  // notification opens the right tab while the tabs stay free to click after.
+  _applyLink() {
+    if (!this._config) return;
+    const search = window.location.search;
+    if (search === this._appliedLink) return;
+    const link = parseCardLink(search);
+    if (link.studentId !== null && !this._hass) return;
+    this._appliedLink = search;
+    if (link.view) this._view = link.view;
+    if (link.studentId !== null) {
+      const index = this._students().findIndex(
+        (student) => studentMatch(this._hass, student).studentId === link.studentId,
+      );
+      if (index >= 0) this._studentIndex = index;
+    }
+    if (link.view || link.studentId !== null) this.requestUpdate();
   }
 
   _locale() {
@@ -603,35 +776,99 @@ class SomtodayCard extends LitElement {
   _colors() {
     return this._config.subject_colors || {};
   }
+  // Every section toggle defaults to on.
+  _on(option) {
+    return this._config[option] !== false;
+  }
+  // A configured field wins; otherwise the sensor with the right
+  // translation_key on the child's device, so cards made before 0.4.0 pick
+  // the new sensors up without being edited.
+  _studentState(student, field) {
+    return this._state(
+      student[field] ||
+        entityForStudent(this._hass, student, STUDENT_ENTITY_KEYS[field]),
+    );
+  }
+  _maybeFetchRecords() {
+    if (!this._hass || !this._config || !this.isConnected) return;
+    if (!RECORD_SECTIONS.some((key) => this._on(key))) return;
+    // An integration without get_records: there is nothing to ask for.
+    if (this._hass.services && !this._hass.services.somtoday?.get_records) return;
+    refreshRecords(this._hass);
+  }
+  _records(student) {
+    if (!recordsState.response) return EMPTY_RECORDS;
+    return recordsFromResponse(
+      recordsState.response,
+      studentMatch(this._hass, student),
+    );
+  }
+  // Views without anything to show for this child and this user are left out
+  // entirely: no access, a school that does not share it, a section turned off.
+  _availableViews(student) {
+    const records = this._records(student);
+    return VIEWS.filter((view) => {
+      if (view === "assignments") {
+        return this._on("show_assignments") && isEntityUsable(this._studentState(student, "assignments_entity"));
+      }
+      if (view === "grades") {
+        return (this._on("show_grades") || this._on("show_averages")) && records.grades !== null;
+      }
+      if (view === "absences") {
+        return (
+          (this._on("show_absences") && records.absences !== null) ||
+          (this._on("show_measures") && activeMeasures(records.measures).length > 0)
+        );
+      }
+      if (view === "messages") return this._on("show_messages") && records.messages !== null;
+      return true;
+    });
+  }
+  // The chosen view, or the week while it is not (or no longer) available —
+  // for instance until the records have come in.
+  _effectiveView(student) {
+    return this._availableViews(student).includes(this._view) ? this._view : "week";
+  }
 
   render() {
     if (!this._config || !this._hass) return html``;
     const students = this._students();
     const student = this._student();
     const all = this._showingAll();
+    const views = this._availableViews(student);
+    const view = all ? this._view : this._effectiveView(student);
+    const records = this._records(student);
+    const schoolClass = this._on("show_school_class") ? this._studentState(student, "school_class_entity") : null;
+    const className = isEntityUsable(schoolClass) ? schoolClass.attributes?.class_name || schoolClass.state : "";
     return html`<ha-card>
       <div class="header">
         <ha-icon icon="mdi:school-outline"></ha-icon>
         <div class="heading">
           <h2>${this._config.title}</h2>
           <div class="subtitle">
-            ${all ? this._t("all_students") : student.name || this._t(this._view)}
+            ${all
+              ? this._t("all_students")
+              : [student.name || this._t(view), className ? `${this._t("class")} ${className}` : "", className ? schoolClass.attributes?.programme : ""]
+                  .filter(Boolean)
+                  .join(" · ")}
           </div>
         </div>
       </div>
       ${
         this._config.show_view_tabs !== false
           ? html`<div class="view-tabs">
-              ${VIEWS.map(
-                (view) =>
+              ${views.map(
+                (item) =>
                   html`<button
-                    class="tab ${view === this._view ? "active" : ""}"
+                    class="tab ${item === view ? "active" : ""}"
                     @click=${() => {
-                      this._view = view;
+                      this._view = item;
                       this.requestUpdate();
                     }}
                   >
-                    ${this._t(view)}
+                    ${this._t(item)}${item === "messages" && records.unreadMessages > 0
+                      ? html`<span class="unread-count">${records.unreadMessages}</span>`
+                      : ""}
                   </button>`,
               )}
             </div>`
@@ -644,8 +881,10 @@ class SomtodayCard extends LitElement {
             <button class="tab active" @click=${() => window.location.reload()}>${this._t("reload")}</button>
           </div>`
         : ""}
+      ${this._renderNotices(student)}
+      ${all ? "" : this._renderInfoStrip(student)}
       <div class="content">
-        ${all ? this._renderAllStudents(students) : this._renderView(student)}
+        ${all ? this._renderAllStudents(students) : this._renderView(student, view)}
       </div>
       ${this._renderDialog()}
     </ha-card>`;
@@ -690,13 +929,218 @@ class SomtodayCard extends LitElement {
     </div>`;
   }
 
-  _renderView(student) {
-    if (this._view === "week") return this._renderWeek(student);
-    if (this._view === "day") return this._renderDay(student);
-    if (this._view === "tomorrow") return this._renderTomorrow(student);
-    if (this._view === "homework") return this._renderHomework(student);
-    if (this._view === "changes") return this._renderChanges(student);
+  _renderView(student, view = this._view) {
+    if (view === "week") return this._renderWeek(student);
+    if (view === "day") return this._renderDay(student);
+    if (view === "tomorrow") return this._renderTomorrow(student);
+    if (view === "homework") return this._renderHomework(student);
+    if (view === "changes") return this._renderChanges(student);
+    if (view === "assignments") return this._renderAssignments(student);
+    if (view === "grades") return this._renderGrades(student);
+    if (view === "absences") return this._renderAbsences(student);
+    if (view === "messages") return this._renderMessages(student);
     return this._renderTests(student);
+  }
+
+  // Somtoday's own nationwide notices — an outage, maintenance. They are the
+  // same for every child on the account, so one banner is enough.
+  _renderNotices(student) {
+    if (!this._on("show_announcements")) return "";
+    const state = this._studentState(student, "announcements_entity");
+    if (!isEntityUsable(state) || !(Number(state.state) > 0)) return "";
+    const items = (state.attributes?.announcements || []).filter(Boolean);
+    if (!items.length) return "";
+    const icons = { info: "mdi:information-outline", warning: "mdi:alert-outline", error: "mdi:alert-circle-outline", positive: "mdi:check-circle-outline" };
+    return html`<div class="notices" role="status">
+      ${items.map(
+        (item) => html`<div class="notice ${item.level || "info"}">
+          <ha-icon icon=${icons[item.level] || icons.info}></ha-icon>
+          <div><strong>${item.subject || this._t("notice")}</strong>${item.body ? html`<span>${item.body}</span>` : ""}</div>
+        </div>`,
+      )}
+    </div>`;
+  }
+
+  // Holiday countdown and how far the school year is, on one quiet line.
+  _renderInfoStrip(student) {
+    const state = this._studentState(student, "next_holiday_entity");
+    if (!isEntityUsable(state)) return "";
+    const attrs = state.attributes || {};
+    const text = this._on("show_holidays") ? holidayText(attrs, TRANSLATIONS[this._locale()], this._locale()) : "";
+    const progress = this._on("show_school_year") ? schoolYearProgress(attrs) : null;
+    if (!text && progress === null) return "";
+    return html`<div class="info-strip">
+      ${text ? html`<span><ha-icon icon="mdi:beach"></ha-icon>${text}</span>` : ""}
+      ${progress !== null
+        ? html`<span class="year-progress" title=${attrs.school_year?.name || ""}>
+            <small>${this._t("school_year")}</small>
+            <span class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow=${progress}><span style="width:${progress}%"></span></span>
+            <small>${progress}%</small>
+          </span>`
+        : ""}
+    </div>`;
+  }
+
+  _renderAssignments(student) {
+    const state = this._studentState(student, "assignments_entity");
+    if (!isEntityUsable(state)) return this._empty(state ? "unavailable" : "no_assignments");
+    const items = sortAssignments(state.attributes?.assignments || []);
+    if (!items.length) return this._empty("no_assignments");
+    const locale = this._locale();
+    return html`<div class="list">
+      ${items.map((item) => {
+        const status = assignmentStatus(item.status);
+        const color = subjectColor(item.subject, this._colors());
+        return html`<div
+          class="item ${status}"
+          role="button"
+          tabindex="0"
+          style=${color && status !== "late" ? `border-left-color:${color}` : ""}
+          @click=${() => (this._dialog = { type: "assignment", item })}
+          @keydown=${(event) => this._activate(event, { type: "assignment", item })}
+        >
+          <span class="item-head"
+            ><span>${item.subject || "—"}</span
+            ><span class="status-chip ${status}">${this._t(`status_${status}`)}</span></span
+          >
+          ${item.topic ? html`<div>${item.topic}</div>` : ""}
+          ${item.description ? html`<div class="description">${item.description}</div>` : ""}
+          <div class="meta">
+            ${item.deadline ? html`<span>${this._t("deadline")}: ${formatDate(item.deadline, locale)} ${formatTime(item.deadline, locale)}</span>` : ""}
+            ${item.opens && status === "upcoming" ? html`<span>${this._t("opens")}: ${formatDate(item.opens, locale)} ${formatTime(item.opens, locale)}</span>` : ""}
+          </div>
+        </div>`;
+      })}
+    </div>`;
+  }
+
+  _renderGrades(student) {
+    const records = this._records(student);
+    const locale = this._locale();
+    const grades = this._on("show_grades") ? latestGrades(records.grades || [], 10) : [];
+    const averages = this._on("show_averages") ? records.averages || [] : [];
+    const overall = this._on("show_averages") ? records.overallAverage : null;
+    if (!grades.length && !averages.length && overall === null) return this._empty("no_grades");
+    return html`
+      ${grades.length
+        ? html`<div class="section-title">${this._t("latest_grades")}</div>
+            <div class="list">
+              ${grades.map((grade) => {
+                const color = subjectColor(grade.subject || grade.subject_short, this._colors());
+                return html`<div class="record" style=${color ? `--subject-color:${color}` : ""}>
+                  <span class="result">${this._gradeCell(grade, locale, student)}</span>
+                  <div class="what">
+                    <div>${grade.subject || grade.subject_short || "—"}</div>
+                    <div class="meta">
+                      ${grade.description ? html`<span>${grade.description}</span>` : ""}
+                      ${grade.resit ? html`<span class="badge">${this._t("resit")}</span>` : ""}
+                    </div>
+                  </div>
+                  <div class="when">
+                    <div>${grade.entered ? formatDate(grade.entered, locale) : ""}</div>
+                    ${grade.weight !== null && grade.weight !== undefined && grade.weight !== "" ? html`<div>${this._t("weight")} ${grade.weight}×</div>` : ""}
+                  </div>
+                </div>`;
+              })}
+            </div>`
+        : ""}
+      ${averages.length || overall !== null
+        ? html`<div class="section-title">${this._t("averages")}</div>
+            <table class="averages">
+              ${overall !== null
+                ? html`<tr class="overall"><td>${this._t("overall_average")}</td><td class=${overall < 5.5 ? "insufficient" : ""}>${formatGrade(null, overall, locale)}</td></tr>`
+                : ""}
+              ${averages.map(
+                (average) => html`<tr>
+                  <td>${average.subject || average.subject_short || "—"}</td>
+                  <td>${this._gradeCell(average, locale, student)}</td>
+                </tr>`,
+              )}
+            </table>`
+        : ""}
+    `;
+  }
+
+  _renderAbsences(student) {
+    const records = this._records(student);
+    const locale = this._locale();
+    const absences = this._on("show_absences") && records.absences !== null ? sortAbsences(records.absences) : null;
+    const measures = this._on("show_measures") ? activeMeasures(records.measures) : [];
+    return html`
+      ${absences !== null
+        ? html`<div class="section-title">${this._t("absences")}</div>
+            ${absences.length
+              ? html`<div class="list">
+                  ${absences.map((item) => {
+                    const sameDay = String(item.start || "").slice(0, 10) === String(item.end || "").slice(0, 10);
+                    return html`<div class="item change">
+                      <span class="item-head"
+                        ><span>${formatDate(item.start, locale)}${item.start && String(item.start).includes("T") ? ` ${formatTime(item.start, locale)}${item.end && sameDay ? `–${formatTime(item.end, locale)}` : ""}` : ""}</span
+                        ><span class="kind-chip ${item.kind}">${this._t(absenceKindKey(item.kind))}</span></span
+                      >
+                      <div class="meta">
+                        ${item.period ? html`<span>${this._t("period")} ${item.period}</span>` : ""}
+                        ${item.subject ? html`<span>${item.subject}</span>` : ""}
+                        ${item.authorised ? html`<span>${this._t("authorised")}</span>` : ""}
+                        ${item.handled ? html`<span>${this._t("handled")}</span>` : ""}
+                      </div>
+                      ${item.description ? html`<div class="description">${item.description}</div>` : ""}
+                    </div>`;
+                  })}
+                </div>`
+              : this._empty("no_absences")}`
+        : ""}
+      ${measures.length
+        ? html`<div class="section-title">${this._t("measures")}</div>
+            <div class="list">
+              ${measures.map(
+                (item) => html`<div class="item change" style="--subject-color:var(--warning-color)">
+                  <span class="item-head"><span>${item.description || "—"}</span><span class="count">${formatDate(item.date, locale)}</span></span>
+                  ${item.remarks ? html`<div class="description">${item.remarks}</div>` : ""}
+                </div>`,
+              )}
+            </div>`
+        : ""}
+    `;
+  }
+
+  _renderMessages(student) {
+    const messages = sortMessages(this._records(student).messages || []);
+    if (!messages.length) return this._empty("no_messages");
+    const locale = this._locale();
+    return html`<div class="list">
+      ${messages.map(
+        (message) => html`<details class="message ${message.unread ? "unread" : ""}">
+          <summary>
+            <span class="dot" title=${message.unread ? this._t("unread") : ""}></span>
+            <span class="subject">${message.subject || "—"}${message.message_count > 1 ? ` (${message.message_count})` : ""}</span>
+            <span class="when">${formatDate(message.sent, locale)}</span>
+            <span class="sender">${message.sender || ""}${Array.isArray(message.attachments) && message.attachments.length ? html` · <ha-icon icon="mdi:paperclip"></ha-icon> ${message.attachments.length} ${this._t("attachments")}` : Number(message.attachments) > 0 ? ` · ${message.attachments} ${this._t("attachments")}` : ""}</span>
+          </summary>
+          ${message.body ? html`<div class="body">${message.body}</div>` : ""}
+        </details>`,
+      )}
+    </div>`;
+  }
+
+  _activate(event, dialog) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    this._dialog = dialog;
+  }
+
+  // Teacher-attached links open in a new tab; the click must not also open
+  // the item's dialog.
+  _renderLinks(links) {
+    const safe = (links || []).filter((link) => /^https?:\/\//.test(String(link?.url || "")));
+    if (!safe.length) return "";
+    return html`<div class="links">
+      ${safe.map(
+        (link) => html`<a href=${link.url} target="_blank" rel="noopener noreferrer" @click=${(event) => event.stopPropagation()} @keydown=${(event) => event.stopPropagation()}
+          ><ha-icon icon="mdi:open-in-new"></ha-icon>${link.title || link.url}</a
+        >`,
+      )}
+    </div>`;
   }
 
   _renderWeek(student) {
@@ -740,7 +1184,7 @@ class SomtodayCard extends LitElement {
     if (!popup) { this._notify(this._t("popup_blocked")); return; }
     const workState = this._state(student.upcoming_work_entity) || this._relatedState(student, (state) => Array.isArray(state.attributes?.items) && !state.attributes?.config_entry_id);
     const workItems = workState?.attributes?.items || [];
-    const cells = LESSON_PERIOD_SLOTS.map(([period, start, end]) => `<tr><th>${period}<small>${start}–${end}</small></th>${days.map((day) => { const lesson = (day.lessons || []).find((item) => Number(item.period_start ?? item.period) === period || String(item.start || "").slice(11, 16) === start); return lesson ? `<td class="${lesson.cancelled ? "cancelled" : ""}"><strong>${escapeHtml(lesson.subject || lesson.subject_short || "")}</strong><small>${escapeHtml(lesson.teacher || "")}${lesson.location ? ` · ${escapeHtml(lesson.location)}` : ""}</small></td>` : "<td class=empty>Geen les</td>"; }).join("")}</tr>`).join("");
+    const cells = LESSON_PERIOD_SLOTS.map(([period, start, end]) => `<tr><th>${period}<small>${start}–${end}</small></th>${days.map((day) => { const lesson = (day.lessons || []).find((item) => Number(item.period_start ?? item.period) === period || String(item.start || "").slice(11, 16) === start); return lesson ? `<td class="${lesson.cancelled ? "cancelled" : ""}"><strong>${escapeHtml(lessonName(lesson))}</strong><small>${escapeHtml(lesson.teacher || "")}${lesson.location ? ` · ${escapeHtml(lesson.location)}` : ""}</small></td>` : "<td class=empty>Geen les</td>"; }).join("")}</tr>`).join("");
     popup.document.write(`<!doctype html><html><head><title>${escapeHtml(this._config.title)} – ${escapeHtml(this._weekLabel())}</title><style>@page{size:landscape;margin:12mm}body{font:12px Arial;color:#111}h1{margin:0 0 4px}p{margin:0 0 14px;color:#555}table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{border:1px solid #999;padding:6px;vertical-align:top}thead th{background:#e8eef5}tbody th{width:70px;background:#f3f3f3}small{display:block;margin-top:3px;color:#555}.empty{color:#999;background:#fafafa}.cancelled{text-decoration:line-through;background:#ffe8e8}</style></head><body><h1>${escapeHtml(this._config.title)}</h1><p>${escapeHtml(student.name || "")} · ${escapeHtml(this._weekLabel())}</p><table><thead><tr><th>Uur</th>${days.map((day) => `<th>${escapeHtml(formatDate(day.date, this._locale()))}</th>`).join("")}</tr></thead><tbody>${cells}</tbody></table><script>window.onload=()=>{window.print()}<\/script></body></html>`);
     LESSON_PERIOD_SLOTS.forEach(([period, start], rowIndex) => {
       days.forEach((day, dayIndex) => {
@@ -831,7 +1275,7 @@ class SomtodayCard extends LitElement {
         ><span class="count">${lessons.length}</span>
       </div>
       ${planner ? this._edgeButton(this._t("before_school"), date, lessons[0]?.start, true, planner) : ""}
-      ${timeline.map((entry) => entry.type === "lesson" ? this._lessonButton(entry.item, currentState, student) : entry.type === "empty_lesson" ? this._emptyLessonButton(entry, planner) : entry.type === "appointment" ? this._appointmentButton(entry.item, planner) : this._gapButton(entry, planner))}
+      ${timeline.map((entry) => entry.type === "lesson" ? this._lessonButton(entry.item, currentState, student, entry) : entry.type === "empty_lesson" ? this._emptyLessonButton(entry, planner) : entry.type === "appointment" ? this._appointmentButton(entry.item, planner) : this._gapButton(entry, planner))}
       ${missing.map((lesson) => this._lessonButton({ ...lesson, _missing: true }))}
       ${planner ? this._edgeButton(this._t("after_school"), date, lessons.at(-1)?.end, false, planner) : ""}
     </section>`;
@@ -885,7 +1329,7 @@ class SomtodayCard extends LitElement {
 
   _notify(message) { this.dispatchEvent(new CustomEvent("hass-notification", { detail: { message }, bubbles: true, composed: true })); }
 
-  _lessonButton(lesson, currentState, student = this._student()) {
+  _lessonButton(lesson, currentState, student = this._student(), entry = null) {
     const deviation = lesson._missing ? "missing" : lessonDeviation(lesson);
     const current =
       currentState?.attributes?.start &&
@@ -913,18 +1357,40 @@ class SomtodayCard extends LitElement {
       @click=${() => (this._dialog = { type: "lesson", item: lesson, deviation })}
     >
       <span class="lesson-head"
-        ><span>${lesson.subject || lesson.subject_short || "—"}</span
+        ><span>${lessonName(lesson)}</span
         >${deviation ? html`<span class="badge">${this._t(deviation)}</span>` : ""}</span
       >
       <span class="meta"
         ><span
-          >${lesson.period || lesson.period_start ? `${this._t("period")} ${lesson.period || lesson.period_start}` : ""}</span
+          >${this._periodLabel(lesson, entry)}</span
         ><span
           >${lesson.start ? `${formatTime(lesson.start, this._locale())}–${formatTime(lesson.end, this._locale())}` : `${lesson.start_time || ""}–${lesson.end_time || ""}`}</span
         ><span>${lesson.location || ""}</span><span>${lesson.teacher || ""}</span></span
       >
       ${work.length ? html`<span class="work-chips">${work.map((item) => html`<span role="button" class="work-chip ${workKind(item.type)}" @click=${(event) => { event.stopPropagation(); this._dialog = { type: workKind(item.type), item }; }}>${this._t(workKind(item.type))}</span>`)}</span>` : ""}
     </button>`;
+  }
+
+  _periodLabel(lesson, entry) {
+    const first = Number(lesson.period || lesson.period_start) || entry?.period || null;
+    if (!first) return "";
+    const last = Number(lesson.period_end) || entry?.period_end || first;
+    return `${this._t("period")} ${last > first ? `${first}–${last}` : first}`;
+  }
+
+  _gradeLevel(student = this._student()) {
+    return student?.grade_level || this._config.grade_level || "both_main_first";
+  }
+
+  _gradeCell(item, locale, student) {
+    const { primary, secondary } = gradeLevels(item, this._gradeLevel(student));
+    return html`<span class="grade-main ${primary.sufficient === false ? "insufficient" : ""}"
+        >${primary.level && secondary ? html`<small class="level">${primary.level}</small>` : ""}${formatGrade(primary.result, primary.value, locale)}</span
+      >${secondary
+        ? html`<small class="grade-other ${secondary.sufficient === false ? "insufficient" : ""}"
+            >${secondary.level ? `${secondary.level} ` : ""}${formatGrade(secondary.result, secondary.value, locale)}</small
+          >`
+        : ""}`;
   }
 
   _renderHomework(student) {
@@ -979,7 +1445,7 @@ class SomtodayCard extends LitElement {
     const color = subjectColor(change.subject || change.subject_short, this._colors());
     return html`<div class="item change ${change.type}" style=${color ? `--subject-color:${color}` : ""}>
       <span class="item-head"
-        ><span>${change.subject || change.subject_short || "—"}</span
+        ><span>${lessonName(change)}</span
         ><span class="badge">${this._t(`change_${change.type}`)}</span></span
       >
       <div class="meta">
@@ -994,10 +1460,15 @@ class SomtodayCard extends LitElement {
     </div>`;
   }
 
+  // A div acting as a button rather than a <button>, because a homework item
+  // can carry links and a link inside a button does not work in every browser.
   _itemButton(item, type) {
-    return html`<button
+    return html`<div
       class="item ${type === "test" ? "urgent" : ""}"
+      role="button"
+      tabindex="0"
       @click=${() => (this._dialog = { type, item })}
+      @keydown=${(event) => this._activate(event, { type, item })}
     >
       <span class="item-head"
         ><span>${item.subject || "—"}</span
@@ -1007,8 +1478,10 @@ class SomtodayCard extends LitElement {
       ${item.description ? html`<div class="description">${item.description}</div>` : ""}
       <div class="meta">
         ${item.due ? html`<span>${this._t("due")}: ${formatDate(item.due, this._locale())} ${formatTime(item.due, this._locale())}</span>` : ""}
+        ${item.time_indication ? html`<span><ha-icon icon="mdi:timer-outline"></ha-icon> ${item.time_indication}</span>` : ""}
       </div>
-    </button>`;
+      ${this._renderLinks(item.links)}
+    </div>`;
   }
 
   _empty(key) {
@@ -1026,8 +1499,25 @@ class SomtodayCard extends LitElement {
     const rows = [
       [
         this._t("status"),
-        deviation ? this._t(deviation) : item.status || item.type,
+        deviation
+          ? this._t(deviation)
+          : this._dialog.type === "assignment"
+            ? this._t(`status_${assignmentStatus(item.status)}`)
+            : item.status || item.type,
       ],
+      [
+        this._t("deadline"),
+        item.deadline
+          ? `${formatDate(item.deadline, this._locale())} ${formatTime(item.deadline, this._locale())}`
+          : null,
+      ],
+      [
+        this._t("opens"),
+        item.opens
+          ? `${formatDate(item.opens, this._locale())} ${formatTime(item.opens, this._locale())}`
+          : null,
+      ],
+      [this._t("time_indication"), item.time_indication],
       [this._t("period"), item.period || item.period_start],
       [this._t("teacher"), item.teacher],
       [this._t("location"), item.location],
@@ -1056,6 +1546,7 @@ class SomtodayCard extends LitElement {
                 <dd>${value}</dd>`,
           )}
         </dl>
+        ${this._renderLinks(item.links)}
       </div>
       <ha-button slot="primaryAction" dialogAction="close"
         >${this._t("close")}</ha-button
@@ -1116,10 +1607,35 @@ class SomtodayCardEditor extends LitElement {
       font-size: 0.85rem;
       margin: -4px 0 0;
     }
+    .toggles {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 4px 12px;
+    }
   `;
   setConfig(config) {
     this._config = { ...config, students: normalizeStudents(config) };
   }
+  /**
+   * A dropdown for both generations of ha-select: up to HA 2026.9 it was an
+   * mwc-select with <mwc-list-item> children; from 2026.10 it renders its
+   * `options` and reports the choice in `event.detail.value`, ignoring the
+   * children entirely, so the old markup silently stopped working.
+   */
+  _select(label, key, value, options) {
+    return html`<ha-select
+      .label=${label}
+      .value=${value}
+      .options=${options}
+      @selected=${(event) => {
+        const chosen = event.detail?.value ?? event.target.value;
+        if (chosen !== undefined && chosen !== null && chosen !== "" && chosen !== value) this._set(key, chosen);
+      }}
+      @closed=${(event) => event.stopPropagation()}
+      >${options.map((option) => html`<mwc-list-item .value=${option.value}>${option.label}</mwc-list-item>`)}</ha-select
+    >`;
+  }
+
   _set(key, value) {
     this._config = { ...this._config, [key]: value };
     fireConfigChanged(this, this._config);
@@ -1154,6 +1670,23 @@ class SomtodayCardEditor extends LitElement {
       ["next_week_entity", "Next week sensor"],
       ["upcoming_work_entity", "Upcoming schoolwork sensor"],
       ["changes_entity", "Schedule changes sensor"],
+      ["next_holiday_entity", "Next holiday sensor"],
+      ["school_class_entity", "Class sensor"],
+      ["assignments_entity", "Assignments sensor"],
+      ["announcements_entity", "Somtoday notices sensor"],
+    ];
+    const strings = TRANSLATIONS[this.hass?.locale?.language?.startsWith("nl") ? "nl" : "en"];
+    const sections = [
+      "show_holidays",
+      "show_school_year",
+      "show_school_class",
+      "show_announcements",
+      "show_assignments",
+      "show_grades",
+      "show_averages",
+      "show_absences",
+      "show_measures",
+      "show_messages",
     ];
     const students = this._config.students || [];
     const several = students.length > 1;
@@ -1164,29 +1697,35 @@ class SomtodayCardEditor extends LitElement {
         .value=${this._config.title || "Somtoday"}
         @change=${(event) => this._set("title", event.target.value)}
       ></ha-textfield
-      ><ha-select
-        label="Default view"
-        .value=${this._config.default_view || "week"}
-        @selected=${(event) => this._set("default_view", event.target.value)}
-        >${VIEWS.map((view) => html`<mwc-list-item .value=${view}>${view}</mwc-list-item>`)}</ha-select
-      >${several
+      >${this._select("Default view", "default_view", this._config.default_view || "week", VIEWS.map((view) => ({ value: view, label: view })))}${this._select(
+        strings.editor_grade_level,
+        "grade_level",
+        this._config.grade_level || "both_main_first",
+        GRADE_LEVELS.map((level) => ({ value: level, label: strings[`grade_level_${level}`] })),
+      )}${several
         ? html`<ha-formfield label="Show all children side by side on Today and Tomorrow">
               <ha-switch
                 .checked=${this._config.show_all_students === true}
                 @change=${(event) => this._set("show_all_students", event.target.checked)}
               ></ha-switch>
             </ha-formfield>
-            <ha-select
-              label="Order of the children"
-              .value=${manual ? "manual" : "name"}
-              @selected=${(event) => this._set("student_order", event.target.value)}
-              @closed=${(event) => event.stopPropagation()}
-            >
-              <mwc-list-item value="manual">Own order</mwc-list-item>
-              <mwc-list-item value="name">Alphabetical</mwc-list-item>
-            </ha-select>
+            ${this._select("Order of the children", "student_order", manual ? "manual" : "name", [
+              { value: "manual", label: "Own order" },
+              { value: "name", label: "Alphabetical" },
+            ])}
             ${manual ? html`<p class="help">Use the arrows next to each child to change the order.</p>` : ""}`
-        : ""}${students.map(
+        : ""}<h3>${strings.editor_sections}</h3>
+      <div class="toggles">
+        ${sections.map(
+          (key) => html`<ha-formfield .label=${strings[`editor_${key}`]}>
+            <ha-switch
+              .checked=${this._config[key] !== false}
+              @change=${(event) => this._set(key, event.target.checked)}
+            ></ha-switch>
+          </ha-formfield>`,
+        )}
+      </div>
+      <p class="help">${strings.editor_records_hint}</p>${students.map(
         (student, index) =>
           html`<div class="student">
             <div class="student-head">

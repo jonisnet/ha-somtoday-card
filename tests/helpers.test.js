@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildDayTimeline,
+  gradeLevels,
+  lessonName,
   buildSchoolDayTimeline,
   buildStubConfig,
   bundleVersion,
@@ -13,6 +15,7 @@ import {
   lessonDeviation,
   normalizeWeekDays,
   orderStudents,
+  parseCardLink,
   sortHomework,
   STUDENT_ENTITY_KEYS,
   subjectColor,
@@ -228,6 +231,10 @@ describe("auto-detecting students from the entity registry", () => {
     base_week: "basisrooster",
     last_update: "laatste_update",
     schedule_changes: "roosterwijzigingen",
+    next_holiday: "volgende_vakantie",
+    school_class: "klas",
+    assignments: "inleveropdrachten",
+    announcements: "meldingen",
   };
 
   it("fills every card field for a single student", () => {
@@ -490,5 +497,108 @@ describe("workKind", () => {
   it("never shows an unknown type as a test", () => {
     expect(workKind("unknown")).toBe("other");
     expect(workKind(undefined)).toBe("other");
+  });
+});
+
+describe("parseCardLink", () => {
+  it("reads the tab and child from the address", () => {
+    expect(
+      parseCardLink("?somtoday_view=grades&somtoday_student=1234"),
+    ).toEqual({
+      view: "grades",
+      studentId: 1234,
+    });
+  });
+  it("ignores unknown tabs and missing values", () => {
+    expect(parseCardLink("?somtoday_view=secrets")).toEqual({
+      view: null,
+      studentId: null,
+    });
+    expect(parseCardLink("")).toEqual({ view: null, studentId: null });
+    expect(parseCardLink("?edit=1&somtoday_view=messages")).toEqual({
+      view: "messages",
+      studentId: null,
+    });
+  });
+});
+
+describe("blocks without a subject or period", () => {
+  const starr = {
+    title: "STARR",
+    start: "2026-11-10T13:00:00+01:00",
+    end: "2026-11-10T14:30:00+01:00",
+    location: "Huiskamer",
+  };
+
+  it("shows the title when there is no subject", () => {
+    expect(lessonName(starr)).toBe("STARR");
+    expect(lessonName({ subject: "science", title: "207 - 1asc - roej" })).toBe(
+      "science",
+    );
+    expect(lessonName({})).toBe("—");
+  });
+
+  it("covers every period it spans as one row", () => {
+    const rows = buildSchoolDayTimeline("2026-11-10", [starr]).filter(
+      (row) => row.type === "lesson" || row.type === "empty_lesson",
+    );
+    const lesson = rows.filter((row) => row.type === "lesson");
+    expect(lesson).toHaveLength(1);
+    expect([lesson[0].period, lesson[0].period_end]).toEqual([6, 7]);
+    expect(rows.map((row) => row.period)).not.toContain(7);
+    expect(rows.find((row) => row.period === 8).type).toBe("empty_lesson");
+  });
+});
+
+describe("gradeLevels", () => {
+  const science = {
+    result: "5,3",
+    value: 5.3,
+    sufficient: false,
+    level: "BB",
+    alt_level: "KB",
+    alt_result: "4,4",
+    alt_value: 4.4,
+    alt_sufficient: false,
+  };
+
+  it("keeps a single-level grade as it is", () => {
+    expect(gradeLevels({ result: "7,5", value: 7.5 }, "alt")).toEqual({
+      primary: {
+        level: null,
+        result: "7,5",
+        value: 7.5,
+        sufficient: undefined,
+      },
+      secondary: null,
+    });
+  });
+
+  it("puts the chosen level first", () => {
+    expect(gradeLevels(science).primary.result).toBe("5,3");
+    expect(gradeLevels(science).secondary.level).toBe("KB");
+    expect(gradeLevels(science, "both_alt_first").primary.result).toBe("4,4");
+    expect(gradeLevels(science, "both_alt_first").secondary.result).toBe("5,3");
+    expect(gradeLevels(science, "alt")).toMatchObject({
+      primary: { result: "4,4" },
+      secondary: null,
+    });
+    expect(gradeLevels(science, "main")).toMatchObject({
+      primary: { result: "5,3" },
+      secondary: null,
+    });
+  });
+
+  it("rejects an unknown level in the config", () => {
+    const base = {
+      type: "custom:somtoday-card",
+      students: [{ week_entity: "sensor.x" }],
+    };
+    expect(() => validateConfig({ ...base, grade_level: "kb" })).toThrow(
+      /grade_level/,
+    );
+    expect(validateConfig({ ...base, grade_level: "both_alt_first" })).toBe(
+      true,
+    );
   });
 });
